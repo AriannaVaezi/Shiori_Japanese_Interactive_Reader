@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="paper" data-furigana="all">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>栞 Shiori — Japanese Interactive EPUB Reader</title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body>
+  <!-- Library View -->
+  <div id="library-view" class="view">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">栞</span>
+        <div>
+          <h1>Shiori Reader</h1>
+          <p class="subtitle">Japanese-first EPUB reading &amp; grammar companion</p>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button id="btn-rescan" class="btn btn-secondary" type="button">Rescan books/</button>
+        <button id="btn-open-settings-lib" class="btn btn-secondary" type="button">Settings</button>
+      </div>
+    </header>
+
+    <main class="library-main">
+      <div id="library-status" class="status-banner" hidden></div>
+      <div id="books-grid" class="books-grid"></div>
+      <div id="library-empty" class="empty-state" hidden>
+        <h2>No EPUB books found</h2>
+        <p>Place <code>.epub</code> files inside the <code>books/</code> folder and click <strong>Rescan books/</strong>.</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- Reader View -->
+  <div id="reader-view" class="view" hidden>
+    <header class="reader-bar">
+      <div class="reader-bar-left">
+        <button id="btn-back-library" class="btn btn-ghost" type="button" title="Back to Library">← Library</button>
+        <span id="reader-book-title" class="reader-book-title"></span>
+      </div>
+
+      <div class="reader-bar-center">
+        <button id="btn-prev-chap" class="btn btn-icon" type="button" title="Previous Chapter ([)">‹</button>
+        <select id="chapter-select" class="chapter-select" aria-label="Chapter"></select>
+        <button id="btn-next-chap" class="btn btn-icon" type="button" title="Next Chapter (])">›</button>
+      </div>
+
+      <div class="reader-bar-right">
+        <button id="btn-toggle-writing" class="btn btn-pill" type="button" title="Toggle Horizontal / Vertical layout">横 Horizontal</button>
+        <button id="btn-cycle-furigana" class="btn btn-pill" type="button" title="Cycle Furigana mode">振り仮名: All</button>
+        <div class="font-controls">
+          <button id="btn-font-down" class="btn btn-icon" type="button" title="Smaller text">A-</button>
+          <button id="btn-font-up" class="btn btn-icon" type="button" title="Larger text">A+</button>
+        </div>
+        <button id="btn-cycle-theme" class="btn btn-pill" type="button" title="Switch Theme">Paper</button>
+        <button id="btn-toggle-grammar" class="btn btn-pill" type="button" title="Open Grammar Drawer">
+          文法 Notes <span id="grammar-count-badge" class="badge" hidden>0</span>
+        </button>
+        <button id="btn-open-settings-reader" class="btn btn-icon" type="button" title="Settings">⚙</button>
+      </div>
+    </header>
+
+    <div id="reader-workspace" class="reader-workspace">
+      <div id="reader-viewport" class="reader-viewport mode-horizontal">
+        <article id="reader-content" class="reader-content"></article>
+        <nav id="chapter-footer" class="chapter-footer" hidden>
+          <button id="btn-footer-prev" class="btn btn-secondary" type="button">← Previous Chapter</button>
+          <span id="footer-chap-label" class="footer-chap-label"></span>
+          <button id="btn-footer-next" class="btn btn-primary" type="button">Next Chapter →</button>
+        </nav>
+      </div>
+
+      <!-- Grammar Side Drawer -->
+      <aside id="grammar-drawer" class="grammar-drawer" hidden>
+        <div class="drawer-header">
+          <div class="drawer-tabs">
+            <button id="tab-grammar-current" class="drawer-tab active" type="button">Current</button>
+            <button id="tab-grammar-notes" class="drawer-tab" type="button">Chapter Notes (<span id="drawer-notes-count">0</span>)</button>
+          </div>
+          <button id="btn-close-grammar" class="btn btn-icon" type="button" aria-label="Close">×</button>
+        </div>
+
+        <div id="grammar-current-pane" class="drawer-pane">
+          <div id="grammar-empty-hint" class="drawer-empty">
+            Click the <strong>?</strong> button at the end of any sentence, or highlight a phrase while reading, to ask about grammar, particles, idioms, or nuance.
+          </div>
+
+          <div id="grammar-thread-view" class="grammar-thread-view" hidden>
+            <div class="grammar-context-box">
+              <div id="grammar-target-badge" class="grammar-target-badge" hidden></div>
+              <p id="grammar-sentence-preview" class="grammar-sentence-preview"></p>
+            </div>
+            <div id="grammar-status-note" class="inline-alert" hidden></div>
+            <div id="grammar-messages" class="grammar-messages"></div>
+            <form id="grammar-form" class="grammar-form">
+              <textarea id="grammar-input" rows="2" placeholder="Ask a follow-up question about grammar or nuance…"></textarea>
+              <div class="grammar-form-actions">
+                <span class="hint-text">Enter to send · Shift+Enter for newline</span>
+                <button id="btn-grammar-send" class="btn btn-primary" type="submit">Ask</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div id="grammar-notes-pane" class="drawer-pane" hidden>
+          <div id="grammar-notes-list" class="grammar-notes-list"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- 2-Step Lookup Floating Popover -->
+  <div id="lookup-popover" class="lookup-popover" role="dialog" aria-label="Word Lookup" hidden>
+    <div class="lookup-header">
+      <div class="lookup-headword">
+        <span id="lookup-lemma" class="lookup-lemma"></span>
+        <span id="lookup-reading" class="lookup-reading"></span>
+        <span id="lookup-surface-note" class="lookup-surface-note" hidden></span>
+      </div>
+      <div class="lookup-head-actions">
+        <span id="lookup-pos" class="pos-badge" hidden></span>
+        <button id="btn-lookup-regen" class="btn btn-icon-sm" type="button" title="Regenerate Japanese explanation">↻</button>
+        <button id="btn-lookup-close" class="btn btn-icon-sm" type="button" title="Close">×</button>
+      </div>
+    </div>
+
+    <div id="lookup-jj-section" class="lookup-jj-section">
+      <div id="lookup-jj-loading" class="loading-line" hidden>やさしい日本語で意味を読み込み中…</div>
+      <div id="lookup-jj-error" class="inline-alert" hidden></div>
+      <div id="lookup-jj-body" hidden>
+        <p id="lookup-jj-def" class="jj-def"></p>
+        <p id="lookup-jj-context" class="jj-context" hidden></p>
+        <ul id="lookup-jj-examples" class="jj-examples"></ul>
+        <div id="lookup-jj-meta" class="jj-meta"></div>
+      </div>
+    </div>
+
+    <div id="lookup-en-section" class="lookup-en-section">
+      <button id="btn-reveal-en" class="btn btn-secondary btn-block" type="button">
+        英語を見る / Show English
+      </button>
+      <div id="lookup-en-results" class="en-results" hidden></div>
+    </div>
+
+    <div class="lookup-footer">
+      <button id="btn-lookup-ask-grammar" class="btn btn-link" type="button">
+        文法を聞く / Ask Grammar in Sentence →
+      </button>
+    </div>
+  </div>
+
+  <!-- Text Selection Grammar Pill -->
+  <button id="selection-tooltip" class="selection-tooltip" type="button" hidden>
+    ? 文法を聞く / Ask Grammar
+  </button>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal-backdrop" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal-header">
+        <h2 id="settings-title">Settings</h2>
+        <button id="btn-close-settings" class="btn btn-icon" type="button" aria-label="Close">×</button>
+      </div>
+
+      <form id="settings-form" class="modal-body">
+        <div class="field-group">
+          <label class="field-label">AI Provider (for Easy Japanese Lookup &amp; Grammar Q&amp;A)</label>
+          <div class="segmented">
+            <label class="seg-option">
+              <input type="radio" name="llm_provider" value="ollama" />
+              <span>Ollama (Local &amp; Free)</span>
+            </label>
+            <label class="seg-option">
+              <input type="radio" name="llm_provider" value="gemini" />
+              <span>Gemini API (AI Studio)</span>
+            </label>
+          </div>
+        </div>
+
+        <div id="settings-ollama-fields" class="provider-panel">
+          <div class="field-group">
+            <label class="field-label" for="input-ollama-url">Ollama Base URL</label>
+            <div class="inline-row">
+              <input id="input-ollama-url" type="url" placeholder="http://localhost:11434" />
+              <button id="btn-refresh-ollama" class="btn btn-secondary" type="button">Refresh Models</button>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="select-ollama-model">Ollama Model</label>
+            <select id="select-ollama-model">
+              <option value="">Auto-detect best local model</option>
+            </select>
+            <p id="ollama-model-hint" class="field-hint">
+              Recommended for Japanese on 8GB VRAM: <code>qwen3:8b</code>, <code>qwen2.5:7b</code>, or <code>gemma3:4b</code>.
+            </p>
+          </div>
+        </div>
+
+        <div id="settings-gemini-fields" class="provider-panel" hidden>
+          <div class="field-group">
+            <label class="field-label" for="input-gemini-key">Gemini API Key (Google AI Studio)</label>
+            <div class="inline-row">
+              <input id="input-gemini-key" type="password" autocomplete="off" placeholder="Paste AIza... key" />
+              <button id="btn-clear-gemini-key" class="btn btn-secondary" type="button" hidden>Clear Key</button>
+            </div>
+            <p id="gemini-key-hint" class="field-hint"></p>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="select-gemini-model">Gemini Model</label>
+            <select id="select-gemini-model">
+              <option value="gemini-2.5-flash">gemini-2.5-flash (Recommended)</option>
+              <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (Fastest)</option>
+              <option value="gemini-2.5-pro">gemini-2.5-pro (Deepest nuance)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="test-row">
+          <button id="btn-test-llm" class="btn btn-secondary" type="button">Test Connection</button>
+          <span id="llm-test-result" class="test-result"></span>
+        </div>
+
+        <div class="modal-footer">
+          <button id="btn-cancel-settings" class="btn btn-ghost" type="button">Cancel</button>
+          <button id="btn-save-settings" class="btn btn-primary" type="submit">Save Settings</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>

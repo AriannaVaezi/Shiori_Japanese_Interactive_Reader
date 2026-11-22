@@ -1,0 +1,12 @@
+.venv/
+data/
+books/*
+!books/.gitkeep
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.env
+*.db
+*.db-wal
+*.db-shm
