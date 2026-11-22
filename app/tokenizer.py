@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import random
 import re
 import threading
 from dataclasses import dataclass
@@ -15,6 +16,18 @@ _DICTIONARY: sudachipy.Dictionary | None = None
 _TOKENIZER: sudachipy.Tokenizer | None = None
 
 _SKIP_POS = {"補助記号", "空白"}
+_OPENING_PUNCT = set("「『（([【〈《“‘")
+_BUNSETSU_ATTACH_POS = {"助詞", "助動詞", "接尾辞", "補助記号"}
+_TARGET_PARTICLES = {"は", "が", "を", "に", "で", "へ", "と", "も", "から", "まで", "より", "の"}
+_PARTICLE_GROUPS = [
+    ["は", "が", "も", "を"],
+    ["に", "で", "へ", "を"],
+    ["から", "まで", "より", "と"],
+    ["の", "に", "と", "で"],
+]
+_CONTENT_POS = {"名詞", "動詞", "形容詞", "形状詞", "副詞"}
+_EXCLUDE_SUBPOS = {"数詞", "代名詞", "非自立可能"}
+_KANJI_RE = re.compile(r"[\u4e00-\u9fff]")
 _SENTENCE_SPLIT_RE = re.compile(r"[^。！？!?]+(?:[。！？!?]+[」』）)”’。！？!?]*|$)")
 _LEADING_WS_RE = re.compile(r"^[\s\u3000]+")
 
@@ -430,3 +443,143 @@ def tokenize_chapter_html(raw_html: str, chapter_index: int) -> tuple[str, list[
 
     tokenized_html = "".join(str(child) for child in body.contents)
     return tokenized_html, sentences, total_chars
+
+
+def chunk_into_bunsetsu(sentence: str) -> list[str]:
+    """Split a Japanese sentence into grammatical bunsetsu chunks (capped at 6)."""
+    clean = sentence.strip()
+    if not clean:
+        return []
+
+    tokenizer = _get_tokenizer()
+    morphemes = list(tokenizer.tokenize(clean))
+    chunks: list[str] = []
+    pending_prefix = ""
+
+    for m in morphemes:
+        surf = m.surface()
+        pos = m.part_of_speech()
+        pos0 = pos[0]
+        pos1 = pos[1] if len(pos) > 1 else "*"
+
+        if pos0 == "空白" or not surf.strip():
+            continue
+
+        if pos0 == "接頭辞" or (pos0 == "補助記号" and surf in _OPENING_PUNCT):
+            pending_prefix += surf
+            continue
+
+        is_attached = pos0 in _BUNSETSU_ATTACH_POS or (pos1 == "非自立可能" and bool(chunks))
+        if is_attached and chunks:
+            chunks[-1] = chunks[-1] + pending_prefix + surf
+            pending_prefix = ""
+        else:
+            chunks.append(pending_prefix + surf)
+            pending_prefix = ""
+
+    if pending_prefix:
+        if chunks:
+            chunks[-1] += pending_prefix
+        else:
+            chunks.append(pending_prefix)
+
+    chunks = [c.strip() for c in chunks if c.strip()]
+    while len(chunks) > 6:
+        best_idx = min(
+            range(len(chunks) - 1),
+            key=lambda i: len(chunks[i]) + len(chunks[i + 1]),
+        )
+        merged = chunks[best_idx] + chunks[best_idx + 1]
+        chunks = chunks[:best_idx] + [merged] + chunks[best_idx + 2 :]
+
+    return chunks
+
+
+def extract_particle_quiz(sentence: str) -> dict | None:
+    """Create a 4-choice particle fill-in question from a Japanese sentence."""
+    clean = sentence.strip()
+    if len(clean) < 5:
+        return None
+
+    tokenizer = _get_tokenizer()
+    morphemes = list(tokenizer.tokenize(clean))
+    tail_stripped_len = len(clean.rstrip("。！？!?」』）)”’"))
+
+    candidates = []
+    for m in morphemes:
+        pos = m.part_of_speech()
+        surf = m.surface()
+        if pos[0] != "助詞" or surf not in _TARGET_PARTICLES:
+            continue
+        if pos[1] not in {"格助詞", "係助詞", "副助詞"}:
+            continue
+        if surf == "の" and m.end() >= tail_stripped_len:
+            continue
+        candidates.append(m)
+
+    if not candidates:
+        return None
+
+    center = len(clean) / 2.0
+    chosen = min(candidates, key=lambda m: abs(((m.begin() + m.end()) / 2.0) - center))
+    particle = chosen.surface()
+    blanked = f"{clean[:chosen.begin()]}＿＿{clean[chosen.end():]}"
+
+    group = next((g for g in _PARTICLE_GROUPS if particle in g), ["は", "が", "を", "に"])
+    choices = list(dict.fromkeys([particle] + [p for p in group if p != particle]))
+    for extra in ("は", "が", "を", "に", "で", "も", "と", "から"):
+        if len(choices) >= 4:
+            break
+        if extra not in choices:
+            choices.append(extra)
+    choices = choices[:4]
+    rng = random.Random(clean + particle)
+    rng.shuffle(choices)
+
+    return {
+        "blanked_sentence": blanked,
+        "correct": particle,
+        "choices": choices,
+        "full_sentence": clean,
+    }
+
+
+def extract_chapter_vocab_pool(sentences: list[dict], max_items: int = 80) -> list[dict]:
+    """Extract unique content words from a chapter's sentences for quiz distractors/fallbacks."""
+    tokenizer = _get_tokenizer()
+    pool: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    for sent in sentences:
+        sent_id = sent.get("sent_id", "")
+        sent_text = sent.get("text", "")
+        if not sent_text:
+            continue
+        for m in tokenizer.tokenize(sent_text):
+            pos = m.part_of_speech()
+            pos0 = pos[0]
+            pos1 = pos[1] if len(pos) > 1 else "*"
+            if pos0 not in _CONTENT_POS or pos1 in _EXCLUDE_SUBPOS:
+                continue
+            surface = m.surface()
+            if len(surface) < 2 and not _KANJI_RE.search(surface):
+                continue
+            lemma = m.dictionary_form()
+            reading = _lemma_reading_hiragana(tokenizer, lemma, m.reading_form())
+            key = (lemma, reading)
+            if key in seen:
+                continue
+            seen.add(key)
+            pool.append(
+                {
+                    "lemma": lemma,
+                    "surface": surface,
+                    "reading": reading,
+                    "pos": pos0,
+                    "sent_id": sent_id,
+                    "sentence_text": sent_text,
+                }
+            )
+            if len(pool) >= max_items:
+                return pool
+    return pool

@@ -28,13 +28,20 @@ const contentEl = document.getElementById("reader-content");
 const selectionTooltip = document.getElementById("selection-tooltip");
 
 let onBackLibraryCb = null;
+let onChapterQuizCb = null;
+let onChapterOpenedCb = null;
 let pendingSelection = null;
 let saveScrollTimer = null;
 let lastProgressSavedMs = Date.now();
 let suppressSelectionClickUntil = 0;
 
-const FURIGANA_MODES = ["all", "hover", "off"];
-const FURIGANA_LABELS = { all: "振り仮名: All", hover: "振り仮名: Hover", off: "振り仮名: Off" };
+const FURIGANA_MODES = ["all", "trouble", "hover", "off"];
+const FURIGANA_LABELS = {
+  all: "振り仮名: All",
+  trouble: "振り仮名: Trouble",
+  hover: "振り仮名: Hover",
+  off: "振り仮名: Off",
+};
 const THEME_MODES = ["paper", "sepia", "dark"];
 const THEME_LABELS = { paper: "Paper", sepia: "Sepia", dark: "Dark" };
 
@@ -111,13 +118,33 @@ function hideSelectionTooltip() {
   pendingSelection = null;
 }
 
-function applyStickyWordHighlights(stickyKeys) {
-  if (!stickyKeys?.length) return;
-  const set = new Set(stickyKeys);
+function applyTokenHighlights(troubleKeys, stickyKeys) {
+  const troubleSet = new Set(troubleKeys || []);
+  const stickySet = new Set(stickyKeys || []);
   contentEl.querySelectorAll(".tok").forEach((el) => {
     const key = `${el.dataset.lemma || ""}|${el.dataset.reading || ""}`;
-    if (set.has(key)) el.classList.add("sticky-word");
+    el.classList.toggle("trouble-word", troubleSet.has(key));
+    el.classList.toggle("sticky-word", stickySet.has(key));
   });
+}
+
+export async function refreshChapterHighlights() {
+  if (!state.currentBook || !state.currentChapter) return;
+  try {
+    const res = await api.getTrouble({
+      bookId: state.currentBook.id,
+      includeRetired: false,
+      limit: 200,
+    });
+    const active = res.items || [];
+    const troubleKeys = active.filter((i) => i.item_type === "word").map((i) => i.item_key);
+    const stickyKeys = active
+      .filter((i) => i.item_type === "word" && i.trouble_score >= 3.0)
+      .map((i) => i.item_key);
+    applyTokenHighlights(troubleKeys, stickyKeys);
+  } catch {
+    // ignore transient highlight refresh error
+  }
 }
 
 function updateNavControls() {
@@ -144,9 +171,10 @@ export async function openChapter(bookId, chapterIndex, restoreScrollRatio = 0) 
   state.currentChapter = chapter;
   contentEl.innerHTML = chapter.html || "";
 
-  applyStickyWordHighlights(chapter.sticky_keys || []);
+  applyTokenHighlights(chapter.trouble_keys || [], chapter.sticky_keys || []);
   await loadChapterGrammarThreads(bookId, chapterIndex);
   updateNavControls();
+  if (onChapterOpenedCb) onChapterOpenedCb();
 
   requestAnimationFrame(() => {
     setScrollRatio(restoreScrollRatio);
@@ -187,8 +215,23 @@ async function persistVisualPref(updates) {
   }
 }
 
-export function initReader({ onBackToLibrary }) {
+export function advanceChapter(delta) {
+  if (!state.currentBook || !state.currentChapter) return;
+  const nextIdx = state.currentChapter.chapter_index + delta;
+  if (nextIdx >= 0 && nextIdx < state.currentChapter.total_chapters) {
+    openChapter(state.currentBook.id, nextIdx, 0);
+  }
+}
+
+export function initReader({ onBackToLibrary, onChapterQuiz, onChapterOpened }) {
   onBackLibraryCb = onBackToLibrary;
+  onChapterQuizCb = onChapterQuiz;
+  onChapterOpenedCb = onChapterOpened;
+
+  const btnChapterQuiz = document.getElementById("btn-chapter-quiz");
+  btnChapterQuiz?.addEventListener("click", () => {
+    if (onChapterQuizCb) onChapterQuizCb("chapter");
+  });
 
   btnBack.addEventListener("click", async () => {
     await flushProgress(true);
@@ -199,18 +242,10 @@ export function initReader({ onBackToLibrary }) {
     if (onBackLibraryCb) onBackLibraryCb();
   });
 
-  const goRelative = (delta) => {
-    if (!state.currentBook || !state.currentChapter) return;
-    const nextIdx = state.currentChapter.chapter_index + delta;
-    if (nextIdx >= 0 && nextIdx < state.currentChapter.total_chapters) {
-      openChapter(state.currentBook.id, nextIdx, 0);
-    }
-  };
-
-  btnPrev.addEventListener("click", () => goRelative(-1));
-  btnFooterPrev.addEventListener("click", () => goRelative(-1));
-  btnNext.addEventListener("click", () => goRelative(1));
-  btnFooterNext.addEventListener("click", () => goRelative(1));
+  btnPrev.addEventListener("click", () => advanceChapter(-1));
+  btnFooterPrev.addEventListener("click", () => advanceChapter(-1));
+  btnNext.addEventListener("click", () => advanceChapter(1));
+  btnFooterNext.addEventListener("click", () => advanceChapter(1));
 
   chapterSelect.addEventListener("change", () => {
     if (!state.currentBook) return;
@@ -359,10 +394,11 @@ export function initReader({ onBackToLibrary }) {
       return;
     }
     if (readerView.hidden) return;
+    if (!document.getElementById("quiz-modal").hidden || !document.getElementById("trouble-modal").hidden) return;
     const tag = document.activeElement?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-    if (e.key === "[") goRelative(-1);
-    if (e.key === "]") goRelative(1);
+    if (e.key === "[") advanceChapter(-1);
+    if (e.key === "]") advanceChapter(1);
   });
 
   window.addEventListener("beforeunload", () => {

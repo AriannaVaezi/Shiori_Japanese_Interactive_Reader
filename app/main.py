@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import config, db
-from app.routes import books, grammar, lookup, settings
+from app.routes import books, grammar, lookup, quiz, settings
 from app.services import books_service
 
 
@@ -25,6 +25,7 @@ app = FastAPI(title="Japanese Interactive EPUB Reader", lifespan=lifespan)
 app.include_router(books.router)
 app.include_router(lookup.router)
 app.include_router(grammar.router)
+app.include_router(quiz.router)
 app.include_router(settings.router)
 
 config.STATIC_DIR.mkdir(parents=True, exist_ok=True)

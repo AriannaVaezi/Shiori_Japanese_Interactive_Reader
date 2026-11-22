@@ -24,6 +24,7 @@ class SettingsUpdateRequest(BaseModel):
     furigana_mode: str | None = None
     theme: str | None = None
     font_size: str | None = None
+    quiz_timer_minutes: str | None = None
 
 
 class LLMTestRequest(BaseModel):

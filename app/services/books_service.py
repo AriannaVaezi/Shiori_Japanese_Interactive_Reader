@@ -217,9 +217,22 @@ def get_chapter(book_id: int, chapter_index: int) -> dict[str, Any] | None:
         grammar_sent_ids = [r["sent_id"] for r in grammar_rows]
 
         sticky_rows = conn.execute(
-            "SELECT item_key FROM trouble_items WHERE item_type = 'word' AND trouble_score >= 3.0"
+            "SELECT item_key FROM trouble_items WHERE item_type = 'word' AND retired = 0 AND trouble_score >= 3.0"
         ).fetchall()
         sticky_keys = [r["item_key"] for r in sticky_rows]
+
+        trouble_rows = conn.execute(
+            "SELECT item_key FROM trouble_items WHERE item_type = 'word' AND retired = 0 AND trouble_score > 0.0"
+        ).fetchall()
+        trouble_keys = [r["item_key"] for r in trouble_rows]
+
+        chapter_trouble_count = conn.execute(
+            """
+            SELECT COUNT(*) FROM trouble_items
+            WHERE retired = 0 AND (book_id = ? OR book_id IS NULL)
+            """,
+            (book_id,),
+        ).fetchone()[0]
 
     return {
         "book_id": book_id,
@@ -231,6 +244,8 @@ def get_chapter(book_id: int, chapter_index: int) -> dict[str, Any] | None:
         "char_count": char_count,
         "grammar_sent_ids": grammar_sent_ids,
         "sticky_keys": sticky_keys,
+        "trouble_keys": trouble_keys,
+        "chapter_trouble_count": chapter_trouble_count,
     }
 
 

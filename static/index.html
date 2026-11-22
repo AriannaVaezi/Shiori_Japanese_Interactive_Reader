@@ -55,6 +55,30 @@
           <button id="btn-font-up" class="btn btn-icon" type="button" title="Larger text">A+</button>
         </div>
         <button id="btn-cycle-theme" class="btn btn-pill" type="button" title="Switch Theme">Paper</button>
+        <div class="timer-anchor">
+          <button id="btn-timer-pill" class="btn btn-pill" type="button" title="Active Reading Timer">⏱ 00:00 / 15m</button>
+          <div id="timer-popover" class="timer-popover" hidden>
+            <div class="timer-pop-head">
+              <strong>Reading Timer</strong>
+              <span id="timer-status-text" class="hint-text">Active</span>
+            </div>
+            <div class="timer-intervals">
+              <button class="btn btn-pill timer-int-btn" type="button" data-mins="0">Off</button>
+              <button class="btn btn-pill timer-int-btn" type="button" data-mins="10">10m</button>
+              <button class="btn btn-pill timer-int-btn" type="button" data-mins="15">15m</button>
+              <button class="btn btn-pill timer-int-btn" type="button" data-mins="20">20m</button>
+              <button class="btn btn-pill timer-int-btn" type="button" data-mins="30">30m</button>
+            </div>
+            <div class="timer-actions">
+              <button id="btn-timer-pause" class="btn btn-secondary" type="button">Pause</button>
+              <button id="btn-timer-reset" class="btn btn-ghost" type="button">Reset</button>
+              <button id="btn-timer-quiz" class="btn btn-primary" type="button">Review Quiz</button>
+            </div>
+          </div>
+        </div>
+        <button id="btn-open-trouble" class="btn btn-pill" type="button" title="Trouble Radar">
+          Radar <span id="trouble-count-badge" class="badge" hidden>0</span>
+        </button>
         <button id="btn-toggle-grammar" class="btn btn-pill" type="button" title="Open Grammar Drawer">
           文法 Notes <span id="grammar-count-badge" class="badge" hidden>0</span>
         </button>
@@ -67,8 +91,11 @@
         <article id="reader-content" class="reader-content"></article>
         <nav id="chapter-footer" class="chapter-footer" hidden>
           <button id="btn-footer-prev" class="btn btn-secondary" type="button">← Previous Chapter</button>
-          <span id="footer-chap-label" class="footer-chap-label"></span>
-          <button id="btn-footer-next" class="btn btn-primary" type="button">Next Chapter →</button>
+          <div class="footer-center">
+            <span id="footer-chap-label" class="footer-chap-label"></span>
+            <button id="btn-chapter-quiz" class="btn btn-primary" type="button">Clear Chapter Quiz (5 Qs)</button>
+          </div>
+          <button id="btn-footer-next" class="btn btn-secondary" type="button">Next Chapter →</button>
         </nav>
       </div>
 
@@ -229,6 +256,97 @@
           <button id="btn-save-settings" class="btn btn-primary" type="submit">Save Settings</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Trouble Radar Modal -->
+  <div id="trouble-modal" class="modal-backdrop" hidden>
+    <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="trouble-title">
+      <div class="modal-header">
+        <h2 id="trouble-title">Trouble Radar</h2>
+        <button id="btn-close-trouble" class="btn btn-icon" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="drawer-tabs">
+          <button id="tab-trouble-active" class="drawer-tab active" type="button">Active Trouble</button>
+          <button id="tab-trouble-retired" class="drawer-tab" type="button">Known (Retired)</button>
+          <button id="tab-trouble-history" class="drawer-tab" type="button">Quiz History</button>
+        </div>
+        <div id="trouble-list" class="trouble-list"></div>
+        <div class="modal-footer">
+          <button id="btn-trouble-launch-quiz" class="btn btn-primary" type="button">Launch 5-Question Quiz</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Adaptive Mini-Game Modal -->
+  <div id="quiz-modal" class="modal-backdrop" hidden>
+    <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="quiz-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="quiz-title">Chapter Review</h2>
+          <span id="quiz-progress-label" class="hint-text"></span>
+        </div>
+        <button id="btn-close-quiz" class="btn btn-icon" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="quiz-progress-track">
+        <div id="quiz-progress-fill" class="quiz-progress-fill"></div>
+      </div>
+      <div class="modal-body">
+        <div id="quiz-loading" class="loading-line" hidden>Preparing your review questions…</div>
+        <div id="quiz-error" class="inline-alert" hidden></div>
+
+        <div id="quiz-stage" hidden>
+          <div class="quiz-stage-top">
+            <span id="quiz-kind-badge" class="pos-badge"></span>
+            <button id="btn-quiz-hint" class="btn btn-link" type="button" hidden>Show Hint</button>
+          </div>
+          <div id="quiz-hint-box" class="jj-context" hidden></div>
+          <p id="quiz-prompt-sentence" class="quiz-prompt-sentence"></p>
+
+          <!-- Cloze / Particle choices -->
+          <div id="quiz-choices" class="quiz-choices" hidden></div>
+
+          <!-- Bunsetsu Scramble -->
+          <div id="quiz-scramble" class="quiz-scramble" hidden>
+            <div id="quiz-scramble-tray" class="scramble-tray" aria-label="Your assembled sentence"></div>
+            <div id="quiz-scramble-bank" class="scramble-bank" aria-label="Available word chunks"></div>
+            <div class="scramble-actions">
+              <button id="btn-scramble-clear" class="btn btn-ghost" type="button">Clear</button>
+              <button id="btn-scramble-check" class="btn btn-primary" type="button">Check Answer</button>
+            </div>
+          </div>
+
+          <div id="quiz-feedback" class="quiz-feedback" hidden>
+            <div id="quiz-feedback-badge" class="quiz-feedback-badge"></div>
+            <p id="quiz-feedback-full" class="quiz-feedback-full"></p>
+            <p id="quiz-feedback-exp" class="hint-text"></p>
+            <div class="quiz-feedback-actions">
+              <button id="btn-quiz-next" class="btn btn-primary" type="button">Next →</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="quiz-summary" class="quiz-summary" hidden>
+          <div class="quiz-score-hero">
+            <span id="quiz-score-num" class="quiz-score-num"></span>
+            <p id="quiz-score-sub" class="subtitle"></p>
+          </div>
+          <div id="quiz-summary-conquered" class="summary-group" hidden>
+            <h4>Conquered / Cleared</h4>
+            <ul id="quiz-conquered-list" class="summary-list"></ul>
+          </div>
+          <div id="quiz-summary-tricky" class="summary-group" hidden>
+            <h4>Still Tricky (stays on radar)</h4>
+            <ul id="quiz-tricky-list" class="summary-list"></ul>
+          </div>
+          <div class="modal-footer">
+            <button id="btn-quiz-done" class="btn btn-secondary" type="button">Back to Reading</button>
+            <button id="btn-quiz-next-chap" class="btn btn-primary" type="button" hidden>Next Chapter →</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

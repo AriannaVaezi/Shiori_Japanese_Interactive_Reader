@@ -23,6 +23,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "furigana_mode": "all",
     "theme": "paper",
     "font_size": "20",
+    "quiz_timer_minutes": "15",
 }
 
 ALLOWED_SETTING_KEYS = set(DEFAULT_SETTINGS.keys())

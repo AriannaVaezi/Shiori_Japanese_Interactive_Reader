@@ -16,7 +16,11 @@ from fastapi.testclient import TestClient
 from app import config, db, dictionary, llm
 from app.epub_parser import parse_epub, read_epub_asset
 from app.main import app
-from app.tokenizer import tokenize_chapter_html
+from app.tokenizer import (
+    chunk_into_bunsetsu,
+    extract_particle_quiz,
+    tokenize_chapter_html,
+)
 
 # Minimal valid 1x1 transparent PNG
 _SAMPLE_PNG = base64.b64decode(
@@ -402,3 +406,165 @@ def test_api_end_to_end(temp_env, monkeypatch: pytest.MonkeyPatch):
         )
         assert prog_resp.status_code == 200
         assert prog_resp.json()["progress"]["reading_seconds"] == 15
+
+
+def test_bunsetsu_and_particle_helpers():
+    samples = [
+        "駅前にはお店が立ち並ぶ商店街がある。",
+        "青い空の下で透き通った水が静かに流れている。",
+        "歩きながら友達と笑いあった。",
+    ]
+    for s in samples:
+        chunks = chunk_into_bunsetsu(s)
+        assert 3 <= len(chunks) <= 6
+        assert "".join(chunks) == s.replace(" ", "").replace("\u3000", "")
+
+        pq = extract_particle_quiz(s)
+        assert pq is not None
+        assert "＿＿" in pq["blanked_sentence"]
+        assert len(pq["choices"]) == 4
+        assert len(set(pq["choices"])) == 4
+        assert pq["correct"] in pq["choices"]
+        assert pq["full_sentence"] == s
+
+
+def test_quiz_and_trouble_lifecycle(temp_env, monkeypatch: pytest.MonkeyPatch):
+    async def fake_generate_text(*, settings, system_prompt, messages, expect_json=False):
+        if expect_json:
+            return (
+                json.dumps(
+                    {
+                        "simple_definition": "すっきりと澄んでいること。",
+                        "part_of_speech": "動詞",
+                        "context_note": "水がきれいな様子です。",
+                        "examples": [{"jp": "湖の水が透き通っている。", "reading": "みずうみ"}],
+                    },
+                    ensure_ascii=False,
+                ),
+                "ollama",
+                "qwen3:8b",
+            )
+        return "- **〜ている** indicates an ongoing state.", "ollama", "qwen3:8b"
+
+    monkeypatch.setattr(llm, "generate_text", fake_generate_text)
+
+    with TestClient(app) as client:
+        books = client.get("/api/books").json()["books"]
+        book1 = books[0]
+        ch1_idx = next(c["chapter_index"] for c in book1["chapters"] if c["title"] == "１")
+
+        # Tokenize chapter 1 first
+        ch_resp = client.get(f"/api/books/{book1['id']}/chapters/{ch1_idx}").json()
+        assert "trouble_keys" in ch_resp
+        assert "sticky_keys" in ch_resp
+        assert ch_resp["chapter_trouble_count"] == 0
+
+        # Log a light J-J lookup (score = 0.5) and a grammar ask (score = 2.5)
+        client.post(
+            "/api/lookup/jj",
+            json={
+                "lemma": "透き通る",
+                "reading": "すきとおる",
+                "surface": "透き通っ",
+                "sentence_text": "青い空の下で透き通った水が静かに流れている。",
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s1",
+            },
+        )
+        client.post(
+            "/api/grammar/ask",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s2",
+                "target_text": "聞こえる",
+                "question": "",
+            },
+        )
+
+        # Verify chapter metadata reflects trouble items & progressive furigana keys
+        ch_after = client.get(f"/api/books/{book1['id']}/chapters/{ch1_idx}").json()
+        assert "透き通る|すきとおる" in ch_after["trouble_keys"]
+        assert ch_after["chapter_trouble_count"] >= 2
+
+        trouble_items = client.get(
+            f"/api/trouble?book_id={book1['id']}"
+        ).json()["items"]
+        word_trouble = next(i for i in trouble_items if i["item_key"] == "透き通る|すきとおる")
+        grammar_trouble = next(i for i in trouble_items if i["item_type"] == "grammar")
+        assert word_trouble["sent_text"] == "青い空の下で透き通った水が静かに流れている。"
+        assert grammar_trouble["sent_text"]
+
+        # Generate adaptive 5-question quiz
+        quiz = client.post(
+            "/api/quiz/generate",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "trigger_type": "chapter",
+                "max_questions": 5,
+            },
+        ).json()
+        questions = quiz["questions"]
+        assert len(questions) == 5
+        assert quiz["trouble_based_count"] >= 2
+
+        kinds = {q["kind"] for q in questions}
+        assert "cloze" in kinds
+        assert "scramble" in kinds
+
+        for q in questions:
+            if q["kind"] == "scramble":
+                assert q["chunks"] != q["correct_answer"]
+                assert sorted(q["chunks"]) == sorted(q["correct_answer"])
+            else:
+                assert "＿＿" in q["blanked_sentence"]
+                assert len(q["choices"]) == 4
+                assert q["correct_answer"] in q["choices"]
+
+        # Submit quiz with all answers correct -> lowers scores & retires low-score word
+        submit_results = [
+            {
+                "question_id": q["question_id"],
+                "kind": q["kind"],
+                "trouble_item_id": q["trouble_item_id"],
+                "correct": True,
+            }
+            for q in questions
+        ]
+        sub_res = client.post(
+            "/api/quiz/submit",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "trigger_type": "chapter",
+                "results": submit_results,
+            },
+        ).json()
+        assert sub_res["score"] == 5
+        assert sub_res["total"] == 5
+        assert any(c["display_text"] == "透き通る" and c["retired"] for c in sub_res["conquered"])
+
+        # Retired item disappears from default active /api/trouble, remains under include_retired=true
+        active_after = client.get(f"/api/trouble?book_id={book1['id']}").json()["items"]
+        assert all(i["item_key"] != "透き通る|すきとおる" for i in active_after)
+
+        all_after = client.get(
+            f"/api/trouble?book_id={book1['id']}&include_retired=true"
+        ).json()["items"]
+        retired_word = next(i for i in all_after if i["item_key"] == "透き通る|すきとおる")
+        assert retired_word["retired"] == 1
+
+        # Manual retire / restore toggle
+        restored = client.post(
+            f"/api/trouble/{retired_word['id']}/retire",
+            json={"retired": False},
+        ).json()["item"]
+        assert restored["retired"] == 0
+
+        # Quiz history persisted
+        hist = client.get(f"/api/quiz/history?book_id={book1['id']}").json()["sessions"]
+        assert len(hist) == 1
+        assert hist[0]["correct_count"] == 5
+        assert hist[0]["total_questions"] == 5

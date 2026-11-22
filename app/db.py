@@ -132,8 +132,22 @@ def init_db() -> None:
                 en_reveals INTEGER NOT NULL DEFAULT 0,
                 grammar_asks INTEGER NOT NULL DEFAULT 0,
                 trouble_score REAL NOT NULL DEFAULT 0.0,
+                correct_count INTEGER NOT NULL DEFAULT 0,
+                wrong_count INTEGER NOT NULL DEFAULT 0,
+                retired INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL,
                 UNIQUE(item_type, item_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS quiz_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER,
+                chapter_index INTEGER,
+                trigger_type TEXT NOT NULL,
+                total_questions INTEGER NOT NULL,
+                correct_count INTEGER NOT NULL,
+                questions_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS grammar_threads (
@@ -150,6 +164,18 @@ def init_db() -> None:
             );
             """
         )
+
+        existing_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(trouble_items)").fetchall()
+        }
+        for col_name, col_def in (
+            ("correct_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("wrong_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("retired", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if col_name not in existing_cols:
+                conn.execute(f"ALTER TABLE trouble_items ADD COLUMN {col_name} {col_def}")
 
         for key, default_val in config.DEFAULT_SETTINGS.items():
             conn.execute(
@@ -234,6 +260,7 @@ def record_trouble_event(
                 en_reveals = trouble_items.en_reveals + excluded.en_reveals,
                 grammar_asks = trouble_items.grammar_asks + excluded.grammar_asks,
                 trouble_score = trouble_items.trouble_score + ?,
+                retired = 0,
                 updated_at = excluded.updated_at
             """,
             (
@@ -253,3 +280,56 @@ def record_trouble_event(
                 effective_score_delta,
             ),
         )
+
+
+def set_trouble_retired(item_id: int, retired: bool) -> dict | None:
+    """Toggle the retired status of a trouble item."""
+    now = utc_now_iso()
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE trouble_items SET retired = ?, updated_at = ? WHERE id = ?",
+            (1 if retired else 0, now, item_id),
+        )
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute("SELECT * FROM trouble_items WHERE id = ?", (item_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def apply_quiz_item_result(item_id: int, correct: bool) -> dict | None:
+    """Update trouble item score and retirement state after a quiz answer."""
+    now = utc_now_iso()
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM trouble_items WHERE id = ?", (item_id,)).fetchone()
+        if row is None:
+            return None
+        cur_score = float(row["trouble_score"] or 0.0)
+        if correct:
+            new_score = max(0.0, cur_score - 2.0)
+            new_retired = 1 if new_score <= 0.5 else 0
+            conn.execute(
+                """
+                UPDATE trouble_items
+                SET correct_count = correct_count + 1,
+                    trouble_score = ?,
+                    retired = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (new_score, new_retired, now, item_id),
+            )
+        else:
+            new_score = cur_score + 0.5
+            conn.execute(
+                """
+                UPDATE trouble_items
+                SET wrong_count = wrong_count + 1,
+                    trouble_score = ?,
+                    retired = 0,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (new_score, now, item_id),
+            )
+        updated = conn.execute("SELECT * FROM trouble_items WHERE id = ?", (item_id,)).fetchone()
+    return dict(updated) if updated else None

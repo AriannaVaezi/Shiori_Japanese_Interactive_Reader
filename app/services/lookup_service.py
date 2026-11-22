@@ -54,6 +54,7 @@ def _log_lookup_event(
     surface: str,
     reading: str,
     revealed_english: bool,
+    sentence_text: str = "",
 ) -> None:
     now = db.utc_now_iso()
     with db.get_conn() as conn:
@@ -84,6 +85,7 @@ def _log_lookup_event(
         book_id=book_id,
         chapter_index=chapter_index,
         sent_id=sent_id,
+        sent_text=sentence_text or None,
         jj_delta=0 if revealed_english else 1,
         en_delta=1 if revealed_english else 0,
         score_delta=2.0 if revealed_english else 0.5,
@@ -123,6 +125,7 @@ async def lookup_jj(
                 surface=clean_surface,
                 reading=clean_reading,
                 revealed_english=False,
+                sentence_text=sentence_text,
             )
             return {
                 "cached": True,
@@ -197,6 +200,7 @@ async def lookup_jj(
         surface=clean_surface,
         reading=clean_reading,
         revealed_english=False,
+        sentence_text=sentence_text,
     )
 
     return {
@@ -220,6 +224,7 @@ def lookup_en(
     book_id: int | None = None,
     chapter_index: int | None = None,
     sent_id: str | None = None,
+    sentence_text: str = "",
 ) -> dict[str, Any]:
     """Return offline JMdict English entries and record an English-reveal trouble signal."""
     clean_lemma = (lemma or surface).strip()
@@ -263,6 +268,7 @@ def lookup_en(
         surface=clean_surface,
         reading=clean_reading,
         revealed_english=True,
+        sentence_text=sentence_text,
     )
 
     return {
@@ -273,15 +279,37 @@ def lookup_en(
     }
 
 
-def list_trouble_items(limit: int = 50) -> list[dict[str, Any]]:
-    """Return top trouble words and grammar items ordered by trouble_score."""
+def list_trouble_items(
+    *,
+    book_id: int | None = None,
+    include_retired: bool = False,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Return tracked trouble words and grammar items ordered by trouble_score."""
+    clauses = []
+    params: list[Any] = []
+    if book_id is not None:
+        clauses.append("book_id = ?")
+        params.append(book_id)
+    if not include_retired:
+        clauses.append("retired = 0")
+
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
+
     with db.get_conn() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT * FROM trouble_items
-            ORDER BY trouble_score DESC, updated_at DESC
+            {where_sql}
+            ORDER BY retired ASC, trouble_score DESC, updated_at DESC
             LIMIT ?
             """,
-            (limit,),
+            params,
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def set_trouble_retired(item_id: int, retired: bool) -> dict[str, Any] | None:
+    """Mark a trouble item as known (retired) or restore it to active review."""
+    return db.set_trouble_retired(item_id, retired)

@@ -12,11 +12,13 @@ export const state = {
     furigana_mode: "all",
     theme: "paper",
     font_size: "20",
+    quiz_timer_minutes: "15",
   },
   books: [],
   currentBook: null,
   currentChapter: null,
   grammarThreads: [],
+  troubleItems: [],
   activeThreadKey: null,
   lastActivityMs: Date.now(),
 };

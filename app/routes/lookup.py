@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.services import lookup_service
@@ -19,6 +19,7 @@ class JJLookupRequest(BaseModel):
     book_id: int | None = None
     chapter_index: int | None = None
     sent_id: str | None = None
+    sentence_text: str = ""
     force_regenerate: bool = False
 
 
@@ -30,6 +31,7 @@ class ENLookupRequest(BaseModel):
     book_id: int | None = None
     chapter_index: int | None = None
     sent_id: str | None = None
+    sentence_text: str = ""
 
 
 @router.post("/lookup/jj")
@@ -48,6 +50,10 @@ async def lookup_jj(req: JJLookupRequest):
     )
 
 
+class TroubleRetireRequest(BaseModel):
+    retired: bool
+
+
 @router.post("/lookup/en")
 def lookup_en(req: ENLookupRequest):
     """Reveal offline JMdict English entries and log an English-reveal trouble signal."""
@@ -59,10 +65,30 @@ def lookup_en(req: ENLookupRequest):
         book_id=req.book_id,
         chapter_index=req.chapter_index,
         sent_id=req.sent_id,
+        sentence_text=req.sentence_text,
     )
 
 
 @router.get("/trouble")
-def get_trouble_items(limit: int = 50):
+def get_trouble_items(
+    book_id: int | None = None,
+    include_retired: bool = False,
+    limit: int = 50,
+):
     """Return tracked trouble words and grammar items ordered by trouble_score."""
-    return {"items": lookup_service.list_trouble_items(limit=max(1, min(limit, 200)))}
+    return {
+        "items": lookup_service.list_trouble_items(
+            book_id=book_id,
+            include_retired=include_retired,
+            limit=max(1, min(limit, 200)),
+        )
+    }
+
+
+@router.post("/trouble/{item_id}/retire")
+def retire_trouble_item(item_id: int, req: TroubleRetireRequest):
+    """Mark a trouble item as known (retired) or restore it."""
+    updated = lookup_service.set_trouble_retired(item_id, req.retired)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Trouble item not found")
+    return {"item": updated}

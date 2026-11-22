@@ -27,6 +27,7 @@ let currentLookup = null;
 let activeTokenEl = null;
 let lookupNonce = 0;
 let onAskGrammarCb = null;
+let onLookupLoggedCb = null;
 
 function clearActiveToken() {
   if (activeTokenEl) {
@@ -168,6 +169,16 @@ function renderENResult(data, anchorRect) {
   if (anchorRect) positionPopover(anchorRect);
 }
 
+function markChapterTokensTrouble(lemma, reading, sticky = false) {
+  if (!lemma) return;
+  document.querySelectorAll("#reader-content .tok").forEach((el) => {
+    if (el.dataset.lemma === lemma && (!reading || el.dataset.reading === reading)) {
+      el.classList.add("trouble-word");
+      if (sticky) el.classList.add("sticky-word");
+    }
+  });
+}
+
 async function fetchJJ(forceRegenerate = false) {
   if (!currentLookup) return;
   const nonce = ++lookupNonce;
@@ -191,6 +202,10 @@ async function fetchJJ(forceRegenerate = false) {
     });
     if (nonce !== lookupNonce || !currentLookup) return;
     renderJJResult(data, currentLookup.anchorRect);
+    if (!data.llm_unavailable) {
+      markChapterTokensTrouble(currentLookup.lemma, currentLookup.reading, false);
+      if (onLookupLoggedCb) onLookupLoggedCb();
+    }
   } catch (err) {
     if (nonce !== lookupNonce || !currentLookup) return;
     renderJJResult(
@@ -249,8 +264,9 @@ export async function openWordLookup(tokenEl) {
   await fetchJJ(false);
 }
 
-export function initLookup({ onAskGrammar }) {
+export function initLookup({ onAskGrammar, onLookupLogged }) {
   onAskGrammarCb = onAskGrammar;
+  onLookupLoggedCb = onLookupLogged;
 
   btnClose.addEventListener("click", closeLookup);
   btnRegen.addEventListener("click", () => fetchJJ(true));
@@ -268,9 +284,12 @@ export function initLookup({ onAskGrammar }) {
         book_id: currentLookup.bookId,
         chapter_index: currentLookup.chapterIndex,
         sent_id: currentLookup.sentId,
+        sentence_text: currentLookup.sentenceText,
       });
       btnRevealEn.hidden = true;
       renderENResult(data, currentLookup.anchorRect);
+      markChapterTokensTrouble(currentLookup.lemma, currentLookup.reading, false);
+      if (onLookupLoggedCb) onLookupLoggedCb();
     } catch (err) {
       btnRevealEn.disabled = false;
       btnRevealEn.textContent = "英語を見る / Show English";

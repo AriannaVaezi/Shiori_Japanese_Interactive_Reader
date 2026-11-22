@@ -82,4 +82,35 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  getTrouble({ bookId = null, includeRetired = false, limit = 80 } = {}) {
+    const params = new URLSearchParams();
+    if (bookId != null) params.set("book_id", String(bookId));
+    if (includeRetired) params.set("include_retired", "true");
+    params.set("limit", String(limit));
+    return request(`/api/trouble?${params.toString()}`);
+  },
+  setTroubleRetired(itemId, retired) {
+    return request(`/api/trouble/${itemId}/retire`, {
+      method: "POST",
+      body: JSON.stringify({ retired }),
+    });
+  },
+  generateQuiz(payload) {
+    return request("/api/quiz/generate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  submitQuiz(payload) {
+    return request("/api/quiz/submit", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  getQuizHistory(bookId = null, limit = 15) {
+    const params = new URLSearchParams();
+    if (bookId != null) params.set("book_id", String(bookId));
+    params.set("limit", String(limit));
+    return request(`/api/quiz/history?${params.toString()}`);
+  },
 };
