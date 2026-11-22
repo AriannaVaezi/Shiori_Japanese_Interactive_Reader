@@ -1562,3 +1562,84 @@ html[data-furigana="off"] ruby rt {
   line-height: 1.55;
   white-space: pre-wrap;
 }
+
+/* Isolated Vocab Hero & 4-Pair Match-Up */
+.quiz-word-hero {
+  font-family: var(--font-book);
+  font-size: 32px;
+  font-weight: 700;
+  text-align: center;
+  padding: 12px 10px 4px;
+  letter-spacing: 0.04em;
+}
+
+.quiz-match {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.match-columns {
+  display: grid;
+  grid-template-columns: 1fr 1.45fr;
+  gap: 10px;
+}
+
+.match-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.match-card {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, opacity 0.14s;
+}
+
+.match-col:first-child .match-card {
+  font-family: var(--font-book);
+  font-size: 17px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.match-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.match-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.match-card.matched {
+  background: #e6f4ea;
+  border-color: #1f7a44;
+  color: #124d29;
+  opacity: 0.72;
+  cursor: default;
+}
+
+.match-card.wrong-flash {
+  background: #fdecec;
+  border-color: #b42318;
+  color: #7a1811;
+}
+
+@media (max-width: 600px) {
+  .match-columns {
+    grid-template-columns: 1fr;
+  }
+}

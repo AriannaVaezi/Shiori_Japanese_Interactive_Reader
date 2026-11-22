@@ -15,9 +15,14 @@ const stageEl = document.getElementById("quiz-stage");
 const kindBadge = document.getElementById("quiz-kind-badge");
 const btnHint = document.getElementById("btn-quiz-hint");
 const hintBox = document.getElementById("quiz-hint-box");
+const wordHero = document.getElementById("quiz-word-hero");
 const promptSentence = document.getElementById("quiz-prompt-sentence");
 
 const choicesEl = document.getElementById("quiz-choices");
+const matchEl = document.getElementById("quiz-match");
+const matchLeftEl = document.getElementById("quiz-match-left");
+const matchRightEl = document.getElementById("quiz-match-right");
+const matchStatusEl = document.getElementById("quiz-match-status");
 const scrambleEl = document.getElementById("quiz-scramble");
 const scrambleTray = document.getElementById("quiz-scramble-tray");
 const scrambleBank = document.getElementById("quiz-scramble-bank");
@@ -99,6 +104,7 @@ function showFeedback(isCorrect, q) {
     question_id: q.question_id,
     kind: q.kind,
     trouble_item_id: q.trouble_item_id ?? null,
+    trouble_item_ids: q.trouble_item_ids ?? [],
     correct: isCorrect,
   });
 
@@ -109,6 +115,99 @@ function showFeedback(isCorrect, q) {
   feedbackExp.textContent = q.explanation && q.explanation !== q.full_sentence ? q.explanation : "";
   btnNext.textContent =
     sessionState.index + 1 >= sessionState.questions.length ? "Finish Round →" : "Next →";
+}
+
+function renderMatchPairs(q) {
+  let selectedLeftId = null;
+  let selectedRightId = null;
+  const matchedIds = new Set();
+  let misses = 0;
+
+  const updateStatus = () => {
+    matchStatusEl.textContent = `Matched ${matchedIds.size} / ${q.pairs.length} · Misses: ${misses}`;
+  };
+
+  const renderSelectionHighlights = () => {
+    [...matchLeftEl.children].forEach((btn) => {
+      const id = Number(btn.dataset.pairId);
+      btn.classList.toggle("selected", id === selectedLeftId && !matchedIds.has(id));
+    });
+    [...matchRightEl.children].forEach((btn) => {
+      const id = Number(btn.dataset.pairId);
+      btn.classList.toggle("selected", id === selectedRightId && !matchedIds.has(id));
+    });
+  };
+
+  const checkPairAttempt = () => {
+    if (selectedLeftId === null || selectedRightId === null || sessionState.answered) return;
+    const lId = selectedLeftId;
+    const rId = selectedRightId;
+    const leftBtn = matchLeftEl.querySelector(`[data-pair-id="${lId}"]`);
+    const rightBtn = matchRightEl.querySelector(`[data-pair-id="${rId}"]`);
+
+    if (lId === rId) {
+      matchedIds.add(lId);
+      leftBtn.classList.remove("selected");
+      rightBtn.classList.remove("selected");
+      leftBtn.classList.add("matched");
+      rightBtn.classList.add("matched");
+      leftBtn.disabled = true;
+      rightBtn.disabled = true;
+      selectedLeftId = null;
+      selectedRightId = null;
+      updateStatus();
+      if (matchedIds.size === q.pairs.length) {
+        showFeedback(misses <= 1, q);
+      }
+      return;
+    }
+
+    misses += 1;
+    selectedLeftId = null;
+    selectedRightId = null;
+    renderSelectionHighlights();
+    leftBtn.classList.add("wrong-flash");
+    rightBtn.classList.add("wrong-flash");
+    updateStatus();
+    setTimeout(() => {
+      leftBtn.classList.remove("wrong-flash");
+      rightBtn.classList.remove("wrong-flash");
+    }, 380);
+  };
+
+  matchLeftEl.replaceChildren();
+  for (const item of q.left_items || []) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "match-card";
+    btn.dataset.pairId = String(item.id);
+    btn.textContent = item.text;
+    btn.addEventListener("click", () => {
+      if (sessionState.answered || matchedIds.has(item.id)) return;
+      selectedLeftId = selectedLeftId === item.id ? null : item.id;
+      renderSelectionHighlights();
+      checkPairAttempt();
+    });
+    matchLeftEl.appendChild(btn);
+  }
+
+  matchRightEl.replaceChildren();
+  for (const item of q.right_items || []) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "match-card";
+    btn.dataset.pairId = String(item.id);
+    btn.textContent = item.text;
+    btn.addEventListener("click", () => {
+      if (sessionState.answered || matchedIds.has(item.id)) return;
+      selectedRightId = selectedRightId === item.id ? null : item.id;
+      renderSelectionHighlights();
+      checkPairAttempt();
+    });
+    matchRightEl.appendChild(btn);
+  }
+
+  updateStatus();
 }
 
 function renderQuestion() {
@@ -124,6 +223,10 @@ function renderQuestion() {
   summaryEl.hidden = true;
   feedbackEl.hidden = true;
   hintBox.hidden = true;
+  wordHero.hidden = true;
+  choicesEl.hidden = true;
+  scrambleEl.hidden = true;
+  matchEl.hidden = true;
 
   kindBadge.textContent = q.prompt_label || q.kind;
   if (q.hint) {
@@ -135,14 +238,28 @@ function renderQuestion() {
 
   if (q.kind === "scramble") {
     promptSentence.textContent = "Arrange the sentence chunks into the natural order:";
-    choicesEl.hidden = true;
     scrambleEl.hidden = false;
     renderScrambleChips();
     return;
   }
 
-  promptSentence.textContent = q.blanked_sentence || "";
-  scrambleEl.hidden = true;
+  if (q.kind === "match_pairs") {
+    promptSentence.textContent = q.prompt_text || "Match each word to its meaning:";
+    matchEl.hidden = false;
+    renderMatchPairs(q);
+    return;
+  }
+
+  if (q.prompt_word) {
+    wordHero.textContent = q.prompt_word;
+    wordHero.hidden = false;
+    promptSentence.textContent = q.prompt_text || "";
+  } else if (q.kind === "def_to_word") {
+    promptSentence.textContent = q.prompt_text || "";
+  } else {
+    promptSentence.textContent = q.blanked_sentence || "";
+  }
+
   choicesEl.hidden = false;
   choicesEl.replaceChildren();
 

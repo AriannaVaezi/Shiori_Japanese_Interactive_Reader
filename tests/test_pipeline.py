@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from app import config, db, dictionary, llm
 from app.epub_parser import parse_epub, read_epub_asset
 from app.main import app
+from app.services import quiz_service
 from app.tokenizer import (
     chunk_into_bunsetsu,
     extract_particle_quiz,
@@ -510,16 +511,30 @@ def test_quiz_and_trouble_lifecycle(temp_env, monkeypatch: pytest.MonkeyPatch):
         assert len(questions) == 5
         assert quiz["trouble_based_count"] >= 2
 
-        kinds = {q["kind"] for q in questions}
-        assert "cloze" in kinds
+        kinds = [q["kind"] for q in questions]
         assert "scramble" in kinds
+        assert kinds.count("cloze") <= 1
+        non_cloze_vocab = [
+            q for q in questions if q["kind"] in {"reading_recall", "meaning_match", "def_to_word", "match_pairs"}
+        ]
+        assert len(non_cloze_vocab) >= 2
 
         for q in questions:
             if q["kind"] == "scramble":
                 assert q["chunks"] != q["correct_answer"]
                 assert sorted(q["chunks"]) == sorted(q["correct_answer"])
-            else:
+            elif q["kind"] == "match_pairs":
+                assert len(q["pairs"]) == 4
+                assert len(q["left_items"]) == 4
+                assert len(q["right_items"]) == 4
+                assert {x["id"] for x in q["left_items"]} == {0, 1, 2, 3}
+                assert {x["id"] for x in q["right_items"]} == {0, 1, 2, 3}
+            elif q["kind"] in {"cloze", "particle"}:
                 assert "＿＿" in q["blanked_sentence"]
+                assert len(q["choices"]) == 4
+                assert q["correct_answer"] in q["choices"]
+            else:
+                assert q["kind"] in {"reading_recall", "meaning_match", "def_to_word"}
                 assert len(q["choices"]) == 4
                 assert q["correct_answer"] in q["choices"]
 
@@ -529,6 +544,7 @@ def test_quiz_and_trouble_lifecycle(temp_env, monkeypatch: pytest.MonkeyPatch):
                 "question_id": q["question_id"],
                 "kind": q["kind"],
                 "trouble_item_id": q["trouble_item_id"],
+                "trouble_item_ids": q.get("trouble_item_ids", []),
                 "correct": True,
             }
             for q in questions
@@ -690,3 +706,140 @@ def test_notes_and_session_quiz(temp_env):
         ).json()
         qs = sess_quiz["questions"]
         assert qs[0]["target_display"] == "冷たい"
+
+
+def test_non_cloze_vocab_question_builders(temp_env):
+    vocab_pool = [
+        {"lemma": "風景", "surface": "風景", "reading": "ふうけい", "pos": "名詞", "sent_id": "s0", "sentence_text": "きれいな風景。"},
+        {"lemma": "記憶", "surface": "記憶", "reading": "きおく", "pos": "名詞", "sent_id": "s1", "sentence_text": "古い記憶。"},
+        {"lemma": "勇気", "surface": "勇気", "reading": "ゆうき", "pos": "名詞", "sent_id": "s2", "sentence_text": "勇気を出す。"},
+        {"lemma": "秘密", "surface": "秘密", "reading": "ひみつ", "pos": "名詞", "sent_id": "s3", "sentence_text": "小さな秘密。"},
+    ]
+
+    # 1. Reading distractors & Reading Recall (no furigana leaked)
+    dists = quiz_service._generate_reading_distractors("しょうてんがい", vocab_pool)
+    assert len(dists) == 3
+    assert len(set(dists)) == 3
+    assert "しょうてんがい" not in dists
+
+    rq = quiz_service._build_reading_recall_question(
+        q_idx=0,
+        lemma="商店街",
+        reading="しょうてんがい",
+        vocab_pool=vocab_pool,
+        trouble_item_id=None,
+    )
+    assert rq is not None
+    assert rq["kind"] == "reading_recall"
+    assert rq["prompt_word"] == "商店街"
+    assert "<rt>" not in rq["prompt_word"]
+    assert len(set(rq["choices"])) == 4
+    assert rq["correct_answer"] == "しょうてんがい"
+
+    # 2. Meaning Match (offline JMdict English path)
+    mq_en = quiz_service._build_meaning_match_question(
+        q_idx=1,
+        lemma="風景",
+        reading="ふうけい",
+        vocab_pool=vocab_pool,
+        trouble_item_id=None,
+    )
+    assert mq_en is not None
+    assert mq_en["kind"] == "meaning_match"
+    assert len(set(mq_en["choices"])) == 4
+    assert mq_en["correct_answer"] in mq_en["choices"]
+
+    # 3. Meaning Match (pure J-J cached path when >= 4 words cached)
+    with db.get_conn() as conn:
+        for w, r, d in (
+            ("風景", "ふうけい", "目に見える景色やながめ。"),
+            ("記憶", "きおく", "前のことを覚えておくこと。"),
+            ("勇気", "ゆうき", "こわがらずに立ち向かう強い気持ち。"),
+            ("秘密", "ひみつ", "ほかの人に知らせないこと。"),
+        ):
+            conn.execute(
+                """
+                INSERT INTO dict_cache (lemma, reading, jj_json, provider, model, updated_at)
+                VALUES (?, ?, ?, 'ollama', 'm', '2026-11-22T00:00:00+00:00')
+                ON CONFLICT(lemma, reading) DO UPDATE SET jj_json = excluded.jj_json
+                """,
+                (w, r, json.dumps({"simple_definition": d}, ensure_ascii=False)),
+            )
+
+    mq_jj = quiz_service._build_meaning_match_question(
+        q_idx=2,
+        lemma="風景",
+        reading="ふうけい",
+        vocab_pool=vocab_pool,
+        trouble_item_id=None,
+    )
+    assert mq_jj is not None
+    assert mq_jj["correct_answer"] == "目に見える景色やながめ。"
+    assert all(not c.isascii() for c in mq_jj["choices"])
+
+    # 4. Reverse Definition -> Word
+    dq = quiz_service._build_def_to_word_question(
+        q_idx=3,
+        lemma="記憶",
+        reading="きおく",
+        vocab_pool=vocab_pool,
+        trouble_item_id=None,
+    )
+    assert dq is not None
+    assert dq["kind"] == "def_to_word"
+    assert dq["prompt_text"] == "前のことを覚えておくこと。"
+    assert len(set(dq["choices"])) == 4
+    assert dq["correct_answer"] == "記憶"
+
+    # 5. 4-Pair Match-Up + multi-item trouble credit on submit
+    with db.get_conn() as conn:
+        t1 = int(
+            conn.execute(
+                """
+                INSERT INTO trouble_items
+                    (item_type, item_key, display_text, reading, trouble_score, retired, updated_at)
+                VALUES ('word', '風景|ふうけい', '風景', 'ふうけい', 1.5, 0, '2026-11-22T00:00:00+00:00')
+                """
+            ).lastrowid
+        )
+        t2 = int(
+            conn.execute(
+                """
+                INSERT INTO trouble_items
+                    (item_type, item_key, display_text, reading, trouble_score, retired, updated_at)
+                VALUES ('word', '記憶|きおく', '記憶', 'きおく', 1.5, 0, '2026-11-22T00:00:00+00:00')
+                """
+            ).lastrowid
+        )
+
+    mp = quiz_service._build_match_pairs_question(
+        q_idx=4,
+        candidate_words=[
+            {"lemma": "風景", "reading": "ふうけい", "trouble_item_id": t1},
+            {"lemma": "記憶", "reading": "きおく", "trouble_item_id": t2},
+            {"lemma": "勇気", "reading": "ゆうき", "trouble_item_id": None},
+            {"lemma": "秘密", "reading": "ひみつ", "trouble_item_id": None},
+        ],
+    )
+    assert mp is not None
+    assert mp["kind"] == "match_pairs"
+    assert len(mp["pairs"]) == 4
+    assert set(mp["trouble_item_ids"]) == {t1, t2}
+
+    sub = quiz_service.submit_quiz(
+        book_id=None,
+        chapter_index=None,
+        trigger_type="manual",
+        results=[
+            {
+                "question_id": "q_4",
+                "kind": "match_pairs",
+                "trouble_item_id": None,
+                "trouble_item_ids": mp["trouble_item_ids"],
+                "correct": True,
+            }
+        ],
+    )
+    assert sub["score"] == 1
+    assert len(sub["conquered"]) == 2
+    assert all(c["retired"] for c in sub["conquered"])

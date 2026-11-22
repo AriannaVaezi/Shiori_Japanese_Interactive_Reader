@@ -314,10 +314,20 @@
             <button id="btn-quiz-hint" class="btn btn-link" type="button" hidden>Show Hint</button>
           </div>
           <div id="quiz-hint-box" class="jj-context" hidden></div>
+          <div id="quiz-word-hero" class="quiz-word-hero" hidden></div>
           <p id="quiz-prompt-sentence" class="quiz-prompt-sentence"></p>
 
-          <!-- Cloze / Particle choices -->
+          <!-- Cloze / Particle / Vocab choices -->
           <div id="quiz-choices" class="quiz-choices" hidden></div>
+
+          <!-- 4-Pair Match-Up -->
+          <div id="quiz-match" class="quiz-match" hidden>
+            <div class="match-columns">
+              <div id="quiz-match-left" class="match-col"></div>
+              <div id="quiz-match-right" class="match-col"></div>
+            </div>
+            <div id="quiz-match-status" class="hint-text"></div>
+          </div>
 
           <!-- Bunsetsu Scramble -->
           <div id="quiz-scramble" class="quiz-scramble" hidden>

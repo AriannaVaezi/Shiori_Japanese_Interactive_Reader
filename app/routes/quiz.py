@@ -24,6 +24,7 @@ class QuizResultItem(BaseModel):
     question_id: str = ""
     kind: str = ""
     trouble_item_id: int | None = None
+    trouble_item_ids: list[int] = []
     correct: bool
 
 
