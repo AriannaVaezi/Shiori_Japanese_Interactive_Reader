@@ -21,12 +21,14 @@ const jjMeta = document.getElementById("lookup-jj-meta");
 
 const btnRevealEn = document.getElementById("btn-reveal-en");
 const enResults = document.getElementById("lookup-en-results");
+const btnSaveNote = document.getElementById("btn-lookup-save-note");
 const btnAskGrammar = document.getElementById("btn-lookup-ask-grammar");
 
 let currentLookup = null;
 let activeTokenEl = null;
 let lookupNonce = 0;
 let onAskGrammarCb = null;
+let onSaveNoteCb = null;
 let onLookupLoggedCb = null;
 
 function clearActiveToken() {
@@ -264,8 +266,9 @@ export async function openWordLookup(tokenEl) {
   await fetchJJ(false);
 }
 
-export function initLookup({ onAskGrammar, onLookupLogged }) {
+export function initLookup({ onAskGrammar, onSaveNote, onLookupLogged }) {
   onAskGrammarCb = onAskGrammar;
+  onSaveNoteCb = onSaveNote;
   onLookupLoggedCb = onLookupLogged;
 
   btnClose.addEventListener("click", closeLookup);
@@ -296,6 +299,19 @@ export function initLookup({ onAskGrammar, onLookupLogged }) {
       enResults.hidden = false;
       enResults.textContent = `Lookup error: ${err.message}`;
     }
+  });
+
+  btnSaveNote.addEventListener("click", () => {
+    if (!currentLookup || !onSaveNoteCb) return;
+    const { bookId, chapterIndex, sentId, sentenceText } = currentLookup;
+    closeLookup();
+    onSaveNoteCb({
+      bookId,
+      chapterIndex,
+      sentId,
+      quoteText: sentenceText,
+      category: "expression",
+    });
   });
 
   btnAskGrammar.addEventListener("click", () => {

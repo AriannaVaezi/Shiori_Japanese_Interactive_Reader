@@ -1,21 +1,31 @@
-/** Frontend application bootstrap wiring Library, Reader, Lookup, Grammar, Trouble Radar, Timer, and Mini-Games. */
+/** Frontend application bootstrap wiring Library, Reader, Lookup, Grammar, Notes, Trouble Radar, Timer, and Mini-Games. */
 
 import { api } from "./api.js";
-import { initGrammar, openGrammarForSentence } from "./grammar.js";
+import { closeGrammarDrawer, initGrammar, openGrammarForSentence } from "./grammar.js";
 import { initLibrary, loadLibrary, showLibraryView } from "./library.js";
-import { initLookup } from "./lookup.js";
+import { closeLookup, initLookup } from "./lookup.js";
 import { initMiniGame, launchQuiz } from "./minigame.js";
+import { closeNotesModal, initNotes, openNotesModal, refreshNotesBadge } from "./notes.js";
 import {
   advanceChapter,
   applyVisualSettings,
   initReader,
   openBook,
+  openChapter,
   refreshChapterHighlights,
+  scrollToSentence,
 } from "./reader.js";
 import { closeSettingsModal, initSettings, openSettingsModal } from "./settings.js";
 import { state } from "./state.js";
 import { initTimer, renderTimerUI, resetTimer } from "./timer.js";
 import { closeTroubleModal, initTrouble, refreshTroubleBadge } from "./trouble.js";
+
+function leaveReaderToLibrary() {
+  closeLookup();
+  closeGrammarDrawer();
+  document.getElementById("reader-view").hidden = true;
+  showLibraryView();
+}
 
 async function bootstrap() {
   try {
@@ -35,6 +45,21 @@ async function bootstrap() {
     onLaunchQuiz: (triggerType) => launchQuiz(triggerType),
     onHighlightsChanged: () => refreshChapterHighlights(),
   });
+  initNotes({
+    onJumpToNote: async ({ bookId, chapterIndex, sentId }) => {
+      const sameBook = state.currentBook?.id === bookId;
+      const sameChap = state.currentChapter?.chapter_index === chapterIndex;
+      if (!sameBook) {
+        await openBook(bookId, chapterIndex, 0);
+      } else if (!sameChap) {
+        await openChapter(bookId, chapterIndex, 0);
+      }
+      if (sentId) {
+        requestAnimationFrame(() => scrollToSentence(sentId));
+      }
+    },
+    onNotesChanged: () => refreshChapterHighlights(),
+  });
   initMiniGame({
     onQuizCompleted: () => {
       resetTimer();
@@ -42,16 +67,20 @@ async function bootstrap() {
       refreshChapterHighlights();
     },
     onNextChapter: () => advanceChapter(1),
+    onBackToLibrary: leaveReaderToLibrary,
   });
   initLookup({
     onAskGrammar: (ctx) => openGrammarForSentence(ctx),
+    onSaveNote: (ctx) => openNotesModal(ctx),
     onLookupLogged: () => refreshTroubleBadge(),
   });
   initReader({
     onBackToLibrary: () => showLibraryView(),
     onChapterQuiz: (triggerType) => launchQuiz(triggerType),
+    onSaveNote: (ctx) => openNotesModal(ctx),
     onChapterOpened: () => {
       refreshTroubleBadge();
+      refreshNotesBadge();
       renderTimerUI();
     },
   });
@@ -65,11 +94,18 @@ async function bootstrap() {
   document
     .getElementById("btn-open-settings-reader")
     .addEventListener("click", openSettingsModal);
+  document
+    .getElementById("btn-open-notes-lib")
+    .addEventListener("click", () => openNotesModal({ scope: "all" }));
+  document
+    .getElementById("btn-open-notes-reader")
+    .addEventListener("click", () => openNotesModal());
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       closeSettingsModal();
       closeTroubleModal();
+      closeNotesModal();
     }
   });
 

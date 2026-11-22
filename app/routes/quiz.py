@@ -17,6 +17,7 @@ class QuizGenerateRequest(BaseModel):
     chapter_index: int
     trigger_type: str = "chapter"
     max_questions: int = 5
+    session_started_at: str | None = None
 
 
 class QuizResultItem(BaseModel):
@@ -41,6 +42,7 @@ def generate_quiz(req: QuizGenerateRequest):
         chapter_index=req.chapter_index,
         trigger_type=req.trigger_type,
         max_questions=max(1, min(req.max_questions, 10)),
+        session_started_at=req.session_started_at,
     )
 
 

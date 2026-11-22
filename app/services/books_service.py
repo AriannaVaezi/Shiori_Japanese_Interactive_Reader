@@ -234,6 +234,15 @@ def get_chapter(book_id: int, chapter_index: int) -> dict[str, Any] | None:
             (book_id,),
         ).fetchone()[0]
 
+        note_rows = conn.execute(
+            """
+            SELECT DISTINCT sent_id FROM reader_notes
+            WHERE book_id = ? AND chapter_index = ? AND sent_id IS NOT NULL
+            """,
+            (book_id, chapter_index),
+        ).fetchall()
+        note_sent_ids = [r["sent_id"] for r in note_rows]
+
     return {
         "book_id": book_id,
         "book_title": book_row["title"],
@@ -243,6 +252,7 @@ def get_chapter(book_id: int, chapter_index: int) -> dict[str, Any] | None:
         "html": _substitute_book_id(tokenized_html, book_id),
         "char_count": char_count,
         "grammar_sent_ids": grammar_sent_ids,
+        "note_sent_ids": note_sent_ids,
         "sticky_keys": sticky_keys,
         "trouble_keys": trouble_keys,
         "chapter_trouble_count": chapter_trouble_count,

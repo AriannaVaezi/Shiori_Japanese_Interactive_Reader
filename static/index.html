@@ -18,6 +18,7 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <button id="btn-open-notes-lib" class="btn btn-secondary" type="button">栞 Notes</button>
         <button id="btn-rescan" class="btn btn-secondary" type="button">Rescan books/</button>
         <button id="btn-open-settings-lib" class="btn btn-secondary" type="button">Settings</button>
       </div>
@@ -78,6 +79,12 @@
         </div>
         <button id="btn-open-trouble" class="btn btn-pill" type="button" title="Trouble Radar">
           Radar <span id="trouble-count-badge" class="badge" hidden>0</span>
+        </button>
+        <button id="btn-done-reading" class="btn btn-pill btn-done-quiz" type="button" title="Save progress and take a quick review quiz on this reading session">
+          Done · Quiz
+        </button>
+        <button id="btn-open-notes-reader" class="btn btn-pill" type="button" title="Saved Quotes &amp; Notes">
+          栞 Notes <span id="notes-count-badge" class="badge" hidden>0</span>
         </button>
         <button id="btn-toggle-grammar" class="btn btn-pill" type="button" title="Open Grammar Drawer">
           文法 Notes <span id="grammar-count-badge" class="badge" hidden>0</span>
@@ -172,16 +179,20 @@
     </div>
 
     <div class="lookup-footer">
+      <button id="btn-lookup-save-note" class="btn btn-link" type="button">
+        ★ Save Note
+      </button>
       <button id="btn-lookup-ask-grammar" class="btn btn-link" type="button">
         文法を聞く / Ask Grammar in Sentence →
       </button>
     </div>
   </div>
 
-  <!-- Text Selection Grammar Pill -->
-  <button id="selection-tooltip" class="selection-tooltip" type="button" hidden>
-    ? 文法を聞く / Ask Grammar
-  </button>
+  <!-- Text Selection Floating Action Bar -->
+  <div id="selection-tooltip" class="selection-tooltip" hidden>
+    <button id="btn-sel-save-note" class="sel-action-btn" type="button">★ Save Quote / Note</button>
+    <button id="btn-sel-ask-grammar" class="sel-action-btn" type="button">? Ask Grammar</button>
+  </div>
 
   <!-- Settings Modal -->
   <div id="settings-modal" class="modal-backdrop" hidden>
@@ -342,10 +353,58 @@
             <ul id="quiz-tricky-list" class="summary-list"></ul>
           </div>
           <div class="modal-footer">
+            <button id="btn-quiz-to-library" class="btn btn-ghost" type="button" hidden>Done &amp; Library</button>
             <button id="btn-quiz-done" class="btn btn-secondary" type="button">Back to Reading</button>
             <button id="btn-quiz-next-chap" class="btn btn-primary" type="button" hidden>Next Chapter →</button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Saved Quotes & Free-Form Notes Modal -->
+  <div id="notes-modal" class="modal-backdrop" hidden>
+    <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="notes-title">
+      <div class="modal-header">
+        <h2 id="notes-title">栞 Saved Quotes &amp; Notes</h2>
+        <button id="btn-close-notes" class="btn btn-icon" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="notes-toolbar">
+          <div class="drawer-tabs">
+            <button id="tab-notes-chapter" class="drawer-tab active" type="button">This Chapter</button>
+            <button id="tab-notes-book" class="drawer-tab" type="button">This Book</button>
+            <button id="tab-notes-all" class="drawer-tab" type="button">All Books</button>
+          </div>
+          <div class="notes-cat-filters">
+            <button class="btn btn-pill note-cat-btn active" type="button" data-cat="">All</button>
+            <button class="btn btn-pill note-cat-btn" type="button" data-cat="quote">★ Quotes</button>
+            <button class="btn btn-pill note-cat-btn" type="button" data-cat="note">📝 Notes</button>
+            <button class="btn btn-pill note-cat-btn" type="button" data-cat="expression">💡 Expressions</button>
+          </div>
+        </div>
+
+        <form id="note-form" class="note-composer">
+          <div id="note-composer-hint" class="hint-text" hidden>Open a book first to add a note linked to a chapter.</div>
+          <div id="note-composer-fields" class="note-composer-fields">
+            <textarea id="input-note-quote" rows="2" placeholder="Optional passage or favorite quote from the book…"></textarea>
+            <textarea id="input-note-text" rows="2" placeholder="Write a personal note, summary, or reminder (even without looking up words)…"></textarea>
+            <div class="note-composer-bottom">
+              <select id="select-note-category" aria-label="Note category">
+                <option value="quote">★ Favorite Quote</option>
+                <option value="note">📝 Reading / Study Note</option>
+                <option value="expression">💡 Expression / Idiom</option>
+              </select>
+              <div class="note-composer-actions">
+                <button id="btn-note-cancel-edit" class="btn btn-ghost" type="button" hidden>Cancel Edit</button>
+                <button id="btn-note-save" class="btn btn-primary" type="submit">Save Note</button>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <div id="notes-status" class="inline-alert" hidden></div>
+        <div id="notes-list" class="trouble-list"></div>
       </div>
     </div>
   </div>

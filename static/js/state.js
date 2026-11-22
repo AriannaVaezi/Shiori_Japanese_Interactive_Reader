@@ -19,6 +19,8 @@ export const state = {
   currentChapter: null,
   grammarThreads: [],
   troubleItems: [],
+  notes: [],
+  sessionStartedAt: new Date().toISOString(),
   activeThreadKey: null,
   lastActivityMs: Date.now(),
 };

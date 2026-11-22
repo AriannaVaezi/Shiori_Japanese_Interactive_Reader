@@ -568,3 +568,125 @@ def test_quiz_and_trouble_lifecycle(temp_env, monkeypatch: pytest.MonkeyPatch):
         assert len(hist) == 1
         assert hist[0]["correct_count"] == 5
         assert hist[0]["total_questions"] == 5
+
+
+def test_notes_and_session_quiz(temp_env):
+    with TestClient(app) as client:
+        books = client.get("/api/books").json()["books"]
+        book1 = books[0]
+        ch1_idx = next(c["chapter_index"] for c in book1["chapters"] if c["title"] == "１")
+        ch2_idx = next(c["chapter_index"] for c in book1["chapters"] if c["title"] == "２")
+
+        # Empty quote + empty note rejected
+        bad = client.post(
+            "/api/notes",
+            json={"book_id": book1["id"], "chapter_index": ch1_idx, "quote_text": "  ", "note_text": ""},
+        )
+        assert bad.status_code == 400
+
+        # 1) Highlighted quote + note tied to sentence
+        n1 = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s1",
+                "quote_text": "駅前にはお店が立ち並ぶ商店街がある。",
+                "note_text": "Great imagery of the town street.",
+                "category": "quote",
+            },
+        )
+        assert n1.status_code == 200
+        note1 = n1.json()["note"]
+        assert note1["book_title"] == book1["title"]
+
+        # 2) Quote-only save
+        n2 = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "quote_text": "田舎の朝には、いつも小鳥の声が聞こえる。",
+                "category": "expression",
+            },
+        )
+        assert n2.status_code == 200
+
+        # 3) Free-form note with NO quote and NO lookups
+        n3 = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch2_idx,
+                "note_text": "Remember how afternoon wind sets the mood for chapter 2.",
+                "category": "note",
+            },
+        )
+        assert n3.status_code == 200
+        note3 = n3.json()["note"]
+
+        # Chapter metadata includes saved sentence IDs
+        ch_meta = client.get(f"/api/books/{book1['id']}/chapters/{ch1_idx}").json()
+        assert f"c{ch1_idx}_s1" in ch_meta["note_sent_ids"]
+
+        # Filtering by chapter / category
+        ch1_notes = client.get(f"/api/notes?book_id={book1['id']}&chapter_index={ch1_idx}").json()["notes"]
+        assert len(ch1_notes) == 2
+        only_notes = client.get(f"/api/notes?book_id={book1['id']}&category=note").json()["notes"]
+        assert len(only_notes) == 1
+        assert only_notes[0]["id"] == note3["id"]
+
+        # Update & delete
+        upd = client.put(
+            f"/api/notes/{note3['id']}",
+            json={"note_text": "Updated chapter 2 reflection.", "category": "note"},
+        )
+        assert upd.status_code == 200
+        assert upd.json()["note"]["note_text"] == "Updated chapter 2 reflection."
+
+        del_r = client.delete(f"/api/notes/{n2.json()['note']['id']}")
+        assert del_r.status_code == 200
+        assert len(client.get(f"/api/notes?book_id={book1['id']}").json()["notes"]) == 2
+
+        # Session quiz prioritization: create an older high-score trouble word, then a fresh lower-score word
+        client.get(f"/api/books/{book1['id']}/chapters/{ch2_idx}")
+        with db.get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO trouble_items
+                    (item_type, item_key, display_text, reading, book_id, last_chapter_index,
+                     sent_id, sent_text, en_reveals, trouble_score, retired, updated_at)
+                VALUES ('word', '立ち並ぶ|たちならぶ', '立ち並ぶ', 'たちならぶ', ?, ?, ?,
+                        '駅前にはお店が立ち並ぶ商店街がある。', 2, 9.0, 0, '2026-01-01T00:00:00+00:00')
+                """,
+                (book1["id"], ch1_idx, f"c{ch1_idx}_s1"),
+            )
+
+        session_start = "2026-11-22T00:00:00Z"
+        # Look up a Chapter 2 word AFTER session_start
+        client.post(
+            "/api/lookup/en",
+            json={
+                "lemma": "冷たい",
+                "norm_form": "冷たい",
+                "surface": "冷たく",
+                "reading": "つめたい",
+                "book_id": book1["id"],
+                "chapter_index": ch2_idx,
+                "sent_id": f"c{ch2_idx}_s1",
+                "sentence_text": "午後になって、風が少し冷たくなった。",
+            },
+        )
+
+        sess_quiz = client.post(
+            "/api/quiz/generate",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch2_idx,
+                "trigger_type": "session",
+                "max_questions": 5,
+                "session_started_at": session_start,
+            },
+        ).json()
+        qs = sess_quiz["questions"]
+        assert qs[0]["target_display"] == "冷たい"

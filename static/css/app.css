@@ -510,6 +510,15 @@ html[data-furigana="off"] ruby rt {
   border-radius: 3px;
 }
 
+.sent.has-note {
+  background: rgba(217, 155, 38, 0.14);
+  border-radius: 3px;
+}
+
+.sent.has-grammar.has-note {
+  background: rgba(168, 130, 62, 0.16);
+}
+
 .sent-ask-btn {
   appearance: none;
   border: 1px solid var(--border);
@@ -729,10 +738,12 @@ html[data-furigana="off"] ruby rt {
   padding-top: 8px;
   border-top: 1px solid var(--border);
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
 }
 
-/* Selection Tooltip */
+/* Selection Floating Action Bar */
 .selection-tooltip {
   position: fixed;
   z-index: 65;
@@ -740,11 +751,34 @@ html[data-furigana="off"] ruby rt {
   color: var(--accent-text);
   border: none;
   border-radius: 999px;
-  padding: 6px 12px;
-  font-size: 12.5px;
-  font-weight: 600;
+  padding: 3px 6px;
   box-shadow: var(--shadow);
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sel-action-btn {
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  border: none;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 999px;
   cursor: pointer;
+}
+
+.sel-action-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.sel-action-btn + .sel-action-btn {
+  border-left: 1px solid rgba(255, 255, 255, 0.28);
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
 }
 
 /* Grammar Side Drawer */
@@ -1401,4 +1435,130 @@ html[data-furigana="off"] ruby rt {
   .quiz-choices {
     grid-template-columns: 1fr;
   }
+}
+
+.btn-done-quiz {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.btn-done-quiz:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+/* Saved Quotes & Notes Notebook */
+.notes-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.notes-cat-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.note-cat-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.note-composer {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.note-composer-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.note-composer textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13.5px;
+}
+
+.note-composer-bottom {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.note-composer-bottom select {
+  width: auto;
+  min-width: 180px;
+}
+
+.note-composer-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.note-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 13px;
+  background: var(--surface-alt);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.note-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.note-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.note-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.note-quote-block {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid #d99b26;
+  background: var(--surface);
+  border-radius: 0 6px 6px 0;
+  font-family: var(--font-book);
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.note-body-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }

@@ -162,6 +162,18 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL,
                 UNIQUE(book_id, chapter_index, sent_id, target_text)
             );
+
+            CREATE TABLE IF NOT EXISTS reader_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                chapter_index INTEGER NOT NULL,
+                sent_id TEXT,
+                quote_text TEXT NOT NULL DEFAULT '',
+                note_text TEXT NOT NULL DEFAULT '',
+                category TEXT NOT NULL DEFAULT 'quote',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
 

@@ -26,9 +26,12 @@ const btnTheme = document.getElementById("btn-cycle-theme");
 const viewport = document.getElementById("reader-viewport");
 const contentEl = document.getElementById("reader-content");
 const selectionTooltip = document.getElementById("selection-tooltip");
+const btnSelSaveNote = document.getElementById("btn-sel-save-note");
+const btnSelAskGrammar = document.getElementById("btn-sel-ask-grammar");
 
 let onBackLibraryCb = null;
 let onChapterQuizCb = null;
+let onSaveNoteCb = null;
 let onChapterOpenedCb = null;
 let pendingSelection = null;
 let saveScrollTimer = null;
@@ -118,7 +121,7 @@ function hideSelectionTooltip() {
   pendingSelection = null;
 }
 
-function applyTokenHighlights(troubleKeys, stickyKeys) {
+function applyTokenHighlights(troubleKeys, stickyKeys, noteSentIds) {
   const troubleSet = new Set(troubleKeys || []);
   const stickySet = new Set(stickyKeys || []);
   contentEl.querySelectorAll(".tok").forEach((el) => {
@@ -126,22 +129,36 @@ function applyTokenHighlights(troubleKeys, stickyKeys) {
     el.classList.toggle("trouble-word", troubleSet.has(key));
     el.classList.toggle("sticky-word", stickySet.has(key));
   });
+  if (noteSentIds != null) {
+    const noteSet = new Set(noteSentIds);
+    contentEl.querySelectorAll(".sent").forEach((el) => {
+      el.classList.toggle("has-note", noteSet.has(el.dataset.sentId));
+    });
+  }
 }
 
 export async function refreshChapterHighlights() {
   if (!state.currentBook || !state.currentChapter) return;
   try {
-    const res = await api.getTrouble({
-      bookId: state.currentBook.id,
-      includeRetired: false,
-      limit: 200,
-    });
-    const active = res.items || [];
+    const [troubleRes, notesRes] = await Promise.all([
+      api.getTrouble({
+        bookId: state.currentBook.id,
+        includeRetired: false,
+        limit: 200,
+      }),
+      api.listNotes({
+        bookId: state.currentBook.id,
+        chapterIndex: state.currentChapter.chapter_index,
+        limit: 200,
+      }),
+    ]);
+    const active = troubleRes.items || [];
     const troubleKeys = active.filter((i) => i.item_type === "word").map((i) => i.item_key);
     const stickyKeys = active
       .filter((i) => i.item_type === "word" && i.trouble_score >= 3.0)
       .map((i) => i.item_key);
-    applyTokenHighlights(troubleKeys, stickyKeys);
+    const noteSentIds = (notesRes.notes || []).map((n) => n.sent_id).filter(Boolean);
+    applyTokenHighlights(troubleKeys, stickyKeys, noteSentIds);
   } catch {
     // ignore transient highlight refresh error
   }
@@ -171,7 +188,11 @@ export async function openChapter(bookId, chapterIndex, restoreScrollRatio = 0) 
   state.currentChapter = chapter;
   contentEl.innerHTML = chapter.html || "";
 
-  applyTokenHighlights(chapter.trouble_keys || [], chapter.sticky_keys || []);
+  applyTokenHighlights(
+    chapter.trouble_keys || [],
+    chapter.sticky_keys || [],
+    chapter.note_sent_ids || []
+  );
   await loadChapterGrammarThreads(bookId, chapterIndex);
   updateNavControls();
   if (onChapterOpenedCb) onChapterOpenedCb();
@@ -186,6 +207,7 @@ export async function openChapter(bookId, chapterIndex, restoreScrollRatio = 0) 
 export async function openBook(bookId, startChapter = 0, startScroll = 0) {
   const book = await api.getBook(bookId);
   state.currentBook = book;
+  state.sessionStartedAt = new Date().toISOString();
   bookTitleEl.textContent = book.title;
 
   chapterSelect.replaceChildren();
@@ -223,14 +245,29 @@ export function advanceChapter(delta) {
   }
 }
 
-export function initReader({ onBackToLibrary, onChapterQuiz, onChapterOpened }) {
+export function scrollToSentence(sentId) {
+  if (!sentId) return;
+  const el = contentEl.querySelector(`.sent[data-sent-id="${CSS.escape(sentId)}"]`);
+  el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+}
+
+export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapterOpened }) {
   onBackLibraryCb = onBackToLibrary;
   onChapterQuizCb = onChapterQuiz;
+  onSaveNoteCb = onSaveNote;
   onChapterOpenedCb = onChapterOpened;
 
   const btnChapterQuiz = document.getElementById("btn-chapter-quiz");
   btnChapterQuiz?.addEventListener("click", () => {
     if (onChapterQuizCb) onChapterQuizCb("chapter");
+  });
+
+  const btnDoneReading = document.getElementById("btn-done-reading");
+  btnDoneReading?.addEventListener("click", async () => {
+    await flushProgress(true);
+    closeLookup();
+    hideSelectionTooltip();
+    if (onChapterQuizCb) onChapterQuizCb("session");
   });
 
   btnBack.addEventListener("click", async () => {
@@ -315,7 +352,7 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onChapterOpened }) 
     }
   });
 
-  // Phrase selection pill for multi-word grammar questions
+  // Passage selection bar for saving quotes/notes or asking grammar
   document.addEventListener("mouseup", (e) => {
     if (readerView.hidden) return;
     if (!contentEl.contains(e.target)) {
@@ -331,27 +368,26 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onChapterOpened }) 
 
     const range = sel.getRangeAt(0);
     const cleanTarget = extractRangeCleanText(range);
-    if (cleanTarget.length < 2 || cleanTarget.length > 60) {
+    if (cleanTarget.length < 2 || cleanTarget.length > 1500) {
       hideSelectionTooltip();
       return;
     }
 
+    const startNode = range.startContainer;
+    const startEl = startNode.nodeType === Node.ELEMENT_NODE ? startNode : startNode.parentElement;
     const common = range.commonAncestorContainer;
-    const el = common.nodeType === Node.ELEMENT_NODE ? common : common.parentElement;
-    const sentEl = el?.closest?.(".sent") || range.startContainer.parentElement?.closest?.(".sent");
-    if (!sentEl || !sentEl.dataset.sentId) {
-      hideSelectionTooltip();
-      return;
-    }
+    const commonEl = common.nodeType === Node.ELEMENT_NODE ? common : common.parentElement;
+    const sentEl = commonEl?.closest?.(".sent") || startEl?.closest?.(".sent");
 
     suppressSelectionClickUntil = Date.now() + 250;
     const rect = range.getBoundingClientRect();
     pendingSelection = {
-      sentId: sentEl.dataset.sentId,
-      sentenceText: extractCleanText(sentEl),
+      sentId: sentEl?.dataset.sentId || null,
+      sentenceText: sentEl ? extractCleanText(sentEl) : cleanTarget,
       targetText: cleanTarget,
     };
 
+    btnSelAskGrammar.hidden = !(sentEl && cleanTarget.length <= 200);
     selectionTooltip.hidden = false;
     const tipRect = selectionTooltip.getBoundingClientRect();
     const left = Math.min(
@@ -363,8 +399,23 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onChapterOpened }) 
     selectionTooltip.style.top = `${Math.round(top)}px`;
   });
 
-  selectionTooltip.addEventListener("click", () => {
-    if (!pendingSelection) return;
+  btnSelSaveNote.addEventListener("click", () => {
+    if (!pendingSelection || !onSaveNoteCb) return;
+    const payload = { ...pendingSelection };
+    hideSelectionTooltip();
+    window.getSelection()?.removeAllRanges();
+    closeLookup();
+    onSaveNoteCb({
+      bookId: state.currentBook?.id ?? null,
+      chapterIndex: state.currentChapter?.chapter_index ?? null,
+      sentId: payload.sentId,
+      quoteText: payload.targetText,
+      category: "quote",
+    });
+  });
+
+  btnSelAskGrammar.addEventListener("click", () => {
+    if (!pendingSelection || !pendingSelection.sentId) return;
     const payload = { ...pendingSelection };
     hideSelectionTooltip();
     window.getSelection()?.removeAllRanges();
@@ -394,7 +445,11 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onChapterOpened }) 
       return;
     }
     if (readerView.hidden) return;
-    if (!document.getElementById("quiz-modal").hidden || !document.getElementById("trouble-modal").hidden) return;
+    if (
+      !document.getElementById("quiz-modal").hidden ||
+      !document.getElementById("trouble-modal").hidden ||
+      !document.getElementById("notes-modal").hidden
+    ) return;
     const tag = document.activeElement?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (e.key === "[") advanceChapter(-1);

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import random
+from datetime import datetime, timezone
 from typing import Any
 
 from app import db, dictionary
@@ -249,16 +250,30 @@ def _build_particle_question(
     }
 
 
+def _normalize_iso_utc(ts: str | None) -> str | None:
+    if not ts or not ts.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(ts.strip().replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat()
+    except ValueError:
+        return None
+
+
 def generate_quiz(
     *,
     book_id: int,
     chapter_index: int,
     trigger_type: str = "chapter",
     max_questions: int = 5,
+    session_started_at: str | None = None,
 ) -> dict[str, Any]:
     """Build an adaptive mini-game round mixing Cloze, Bunsetsu Scramble, and Particle Fix."""
     sentences = _load_chapter_sentences(book_id, chapter_index)
     vocab_pool = extract_chapter_vocab_pool(sentences)
+    norm_session_ts = _normalize_iso_utc(session_started_at)
 
     with db.get_conn() as conn:
         book_row = conn.execute("SELECT title FROM books WHERE id = ?", (book_id,)).fetchone()
@@ -266,18 +281,33 @@ def generate_quiz(
             "SELECT title FROM chapters WHERE book_id = ? AND chapter_index = ?",
             (book_id, chapter_index),
         ).fetchone()
-        trouble_rows = conn.execute(
-            """
-            SELECT * FROM trouble_items
-            WHERE retired = 0 AND (book_id = ? OR book_id IS NULL)
-            ORDER BY
-                CASE WHEN last_chapter_index = ? THEN 0 ELSE 1 END ASC,
-                trouble_score DESC,
-                updated_at DESC
-            LIMIT 30
-            """,
-            (book_id, chapter_index),
-        ).fetchall()
+        if norm_session_ts:
+            trouble_rows = conn.execute(
+                """
+                SELECT * FROM trouble_items
+                WHERE retired = 0 AND (book_id = ? OR book_id IS NULL)
+                ORDER BY
+                    CASE WHEN updated_at >= ? THEN 0 ELSE 1 END ASC,
+                    CASE WHEN last_chapter_index = ? THEN 0 ELSE 1 END ASC,
+                    trouble_score DESC,
+                    updated_at DESC
+                LIMIT 30
+                """,
+                (book_id, norm_session_ts, chapter_index),
+            ).fetchall()
+        else:
+            trouble_rows = conn.execute(
+                """
+                SELECT * FROM trouble_items
+                WHERE retired = 0 AND (book_id = ? OR book_id IS NULL)
+                ORDER BY
+                    CASE WHEN last_chapter_index = ? THEN 0 ELSE 1 END ASC,
+                    trouble_score DESC,
+                    updated_at DESC
+                LIMIT 30
+                """,
+                (book_id, chapter_index),
+            ).fetchall()
 
     questions: list[dict[str, Any]] = []
     used_sentences: set[str] = set()

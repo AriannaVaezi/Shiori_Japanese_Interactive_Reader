@@ -37,12 +37,14 @@ const conqueredWrap = document.getElementById("quiz-summary-conquered");
 const conqueredList = document.getElementById("quiz-conquered-list");
 const trickyWrap = document.getElementById("quiz-summary-tricky");
 const trickyList = document.getElementById("quiz-tricky-list");
+const btnToLibrary = document.getElementById("btn-quiz-to-library");
 const btnDone = document.getElementById("btn-quiz-done");
 const btnNextChap = document.getElementById("btn-quiz-next-chap");
 
 let sessionState = null;
 let onQuizCompletedCb = null;
 let onNextChapterCb = null;
+let onBackLibraryCb = null;
 
 function renderScrambleChips() {
   if (!sessionState) return;
@@ -225,7 +227,9 @@ async function finishRound() {
     state.currentChapter &&
     state.currentChapter.chapter_index + 1 < state.currentChapter.total_chapters;
   btnNextChap.hidden = !hasNextChapter;
+  btnToLibrary.hidden = !onBackLibraryCb;
 
+  state.sessionStartedAt = new Date().toISOString();
   if (onQuizCompletedCb) onQuizCompletedCb(summary);
 }
 
@@ -235,7 +239,9 @@ export async function launchQuiz(triggerType = "chapter") {
   if (bookId == null || chapterIndex == null) return;
 
   titleEl.textContent =
-    triggerType === "timer"
+    triggerType === "session"
+      ? "Session Wrap-Up Review"
+      : triggerType === "timer"
       ? "Timed Reading Review"
       : triggerType === "manual"
       ? "Trouble Radar Quiz"
@@ -249,12 +255,16 @@ export async function launchQuiz(triggerType = "chapter") {
   modal.hidden = false;
 
   try {
-    const data = await api.generateQuiz({
+    const payload = {
       book_id: bookId,
       chapter_index: chapterIndex,
       trigger_type: triggerType,
       max_questions: 5,
-    });
+    };
+    if (triggerType === "session" && state.sessionStartedAt) {
+      payload.session_started_at = state.sessionStartedAt;
+    }
+    const data = await api.generateQuiz(payload);
     loadingEl.hidden = true;
 
     const questions = data.questions || [];
@@ -288,12 +298,17 @@ export function closeQuizModal() {
   sessionState = null;
 }
 
-export function initMiniGame({ onQuizCompleted, onNextChapter }) {
+export function initMiniGame({ onQuizCompleted, onNextChapter, onBackToLibrary }) {
   onQuizCompletedCb = onQuizCompleted;
   onNextChapterCb = onNextChapter;
+  onBackLibraryCb = onBackToLibrary;
 
   btnClose.addEventListener("click", closeQuizModal);
   btnDone.addEventListener("click", closeQuizModal);
+  btnToLibrary.addEventListener("click", () => {
+    closeQuizModal();
+    if (onBackLibraryCb) onBackLibraryCb();
+  });
   btnNextChap.addEventListener("click", () => {
     closeQuizModal();
     if (onNextChapterCb) onNextChapterCb();
