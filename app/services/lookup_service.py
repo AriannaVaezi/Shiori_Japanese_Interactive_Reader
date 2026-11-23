@@ -22,25 +22,97 @@ _JJ_SYSTEM_PROMPT = """あなたは日本語学習者向けのやさしい国語
 }"""
 
 
+_JJ_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "simple_definition": {"type": "string", "minLength": 1},
+        "part_of_speech": {"type": "string"},
+        "context_note": {"type": "string"},
+        "examples": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "jp": {"type": "string"},
+                    "reading": {"type": "string"},
+                },
+                "required": ["jp", "reading"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["simple_definition", "part_of_speech", "context_note", "examples"],
+    "additionalProperties": False,
+}
+
+_DEF_KEYS = (
+    "simple_definition",
+    "definition",
+    "meaning",
+    "simple_meaning",
+    "explanation",
+    "意味",
+    "簡単な意味",
+    "やさしい意味",
+    "定義",
+    "説明",
+)
+_POS_KEYS = ("part_of_speech", "pos", "品詞")
+_NOTE_KEYS = ("context_note", "nuance", "note", "文脈", "ニュアンス")
+_EXAMPLES_KEYS = ("examples", "example_sentences", "例文")
+
+
+def _pick_first_str(mapping: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for k in keys:
+        val = mapping.get(k)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return ""
+
+
+def _unwrap_jj_source(raw: dict[str, Any]) -> dict[str, Any]:
+    if _pick_first_str(raw, _DEF_KEYS) or _pick_first_str(raw, _NOTE_KEYS):
+        return raw
+    for val in raw.values():
+        if isinstance(val, dict) and (
+            _pick_first_str(val, _DEF_KEYS) or _pick_first_str(val, _NOTE_KEYS)
+        ):
+            return val
+    return raw
+
+
 def _normalize_jj_payload(raw: dict[str, Any]) -> dict[str, Any]:
-    examples_raw = raw.get("examples") or []
+    src = _unwrap_jj_source(raw)
+    examples_raw: Any = []
+    for k in _EXAMPLES_KEYS:
+        if src.get(k):
+            examples_raw = src[k]
+            break
+
     examples: list[dict[str, str]] = []
     if isinstance(examples_raw, list):
         for item in examples_raw[:2]:
-            if isinstance(item, dict) and item.get("jp"):
-                examples.append(
-                    {
-                        "jp": str(item.get("jp", "")).strip(),
-                        "reading": str(item.get("reading", "")).strip(),
-                    }
-                )
+            if isinstance(item, dict):
+                jp = _pick_first_str(item, ("jp", "sentence", "text", "例文"))
+                if jp:
+                    examples.append(
+                        {
+                            "jp": jp,
+                            "reading": _pick_first_str(
+                                item, ("reading", "kana", "furigana", "読み")
+                            ),
+                        }
+                    )
             elif isinstance(item, str) and item.strip():
                 examples.append({"jp": item.strip(), "reading": ""})
 
+    context_note = _pick_first_str(src, _NOTE_KEYS)
+    simple_definition = _pick_first_str(src, _DEF_KEYS) or context_note
+
     return {
-        "simple_definition": str(raw.get("simple_definition", "")).strip(),
-        "part_of_speech": str(raw.get("part_of_speech", "")).strip(),
-        "context_note": str(raw.get("context_note", "")).strip(),
+        "simple_definition": simple_definition,
+        "part_of_speech": _pick_first_str(src, _POS_KEYS),
+        "context_note": context_note,
         "examples": examples,
     }
 
@@ -149,16 +221,36 @@ async def lookup_jj(
 
     settings = db.get_all_settings()
     try:
-        raw_text, provider, model = await llm.generate_text(
-            settings=settings,
-            system_prompt=_JJ_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
-            expect_json=True,
-        )
-        parsed = llm.extract_json_object(raw_text)
-        jj_data = _normalize_jj_payload(parsed)
-        if not jj_data["simple_definition"]:
-            raise ValueError("Missing simple_definition in LLM JSON output.")
+        jj_data: dict[str, Any] | None = None
+        provider = ""
+        model = ""
+        last_val_err: ValueError | None = None
+        for attempt in range(2):
+            prompt = user_prompt
+            if attempt == 1:
+                prompt = (
+                    f"{user_prompt}\n\n"
+                    '注意: 前回のJSONに "simple_definition" がありませんでした。'
+                    '必ず "simple_definition" キーに1〜2文のやさしい日本語の意味を入れてください。'
+                )
+            try:
+                raw_text, provider, model = await llm.generate_text(
+                    settings=settings,
+                    system_prompt=_JJ_SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": prompt}],
+                    expect_json=True,
+                    json_schema=_JJ_JSON_SCHEMA,
+                )
+                parsed = llm.extract_json_object(raw_text)
+                candidate = _normalize_jj_payload(parsed)
+                if not candidate["simple_definition"]:
+                    raise ValueError("Missing simple_definition in LLM JSON output.")
+                jj_data = candidate
+                break
+            except ValueError as err:
+                last_val_err = err
+        if jj_data is None:
+            raise last_val_err or ValueError("Missing simple_definition in LLM JSON output.")
     except (llm.LLMError, ValueError) as exc:
         return {
             "cached": False,

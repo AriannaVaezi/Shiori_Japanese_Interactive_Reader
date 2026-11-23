@@ -97,6 +97,7 @@ async def _llamacpp_chat(
     messages: list[dict[str, str]],
     expect_json: bool = False,
     api_key: str = "",
+    json_schema: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     root = base_url.rstrip("/")
     url = f"{root}/chat/completions" if root.endswith("/v1") else f"{root}/v1/chat/completions"
@@ -113,11 +114,28 @@ async def _llamacpp_chat(
     if model.strip():
         payload["model"] = model.strip()
     if expect_json:
-        payload["response_format"] = {"type": "json_object"}
+        if json_schema:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response",
+                    "strict": True,
+                    "schema": json_schema,
+                },
+            }
+        else:
+            payload["response_format"] = {"type": "json_object"}
 
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.post(url, json=payload, headers=headers)
+            if (
+                resp.status_code in (400, 422)
+                and isinstance(payload.get("response_format"), dict)
+                and payload["response_format"].get("type") == "json_schema"
+            ):
+                payload["response_format"] = {"type": "json_object"}
+                resp = await client.post(url, json=payload, headers=headers)
             if resp.status_code in (400, 422) and "response_format" in payload:
                 payload.pop("response_format", None)
                 resp = await client.post(url, json=payload, headers=headers)
@@ -240,6 +258,7 @@ async def generate_text(
     system_prompt: str,
     messages: list[dict[str, str]],
     expect_json: bool = False,
+    json_schema: dict[str, Any] | None = None,
 ) -> tuple[str, str, str]:
     """Generate a response using the configured LLM provider.
 
@@ -261,7 +280,13 @@ async def generate_text(
             except LLMError:
                 pass
         text, model_used = await _llamacpp_chat(
-            base_url, model, system_prompt, messages, expect_json=expect_json, api_key=api_key
+            base_url,
+            model,
+            system_prompt,
+            messages,
+            expect_json=expect_json,
+            api_key=api_key,
+            json_schema=json_schema,
         )
         return text, "llamacpp", model_used
 

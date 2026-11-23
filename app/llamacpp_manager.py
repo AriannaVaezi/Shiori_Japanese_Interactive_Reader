@@ -53,7 +53,20 @@ def default_models_dirs() -> list[Path]:
 
 
 def find_llama_server_binary() -> Path | None:
-    """Locate `llama-server` on PATH or in standard WinGet install locations."""
+    """Locate `llama-server`, preferring the dedicated CUDA build on Windows."""
+    if sys.platform.startswith("win"):
+        local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
+        local_roots = []
+        if local_appdata:
+            local_roots.append(Path(local_appdata))
+        home_local = Path.home() / "AppData" / "Local"
+        if not local_appdata or Path(local_appdata) != home_local:
+            local_roots.append(home_local)
+        for root in local_roots:
+            cuda_exe = root / "Shiori" / "bin" / "llama-cuda" / "llama-server.exe"
+            if cuda_exe.is_file():
+                return cuda_exe
+
     for name in ("llama-server", "llama-server.exe"):
         found = shutil.which(name)
         if found:
@@ -221,7 +234,7 @@ class ManagedLlamaServer:
             "--alias",
             alias,
             "-c",
-            "8192",
+            "4096",
             "-np",
             "1",
             "-ngl",
@@ -234,7 +247,12 @@ class ManagedLlamaServer:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         log_handle = self.log_path.open("wb")
         try:
-            self.proc = subprocess.Popen(cmd, stdout=log_handle, stderr=subprocess.STDOUT)
+            self.proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+            )
         except OSError as exc:
             log_handle.close()
             print(f"[llama.cpp] Failed to launch llama-server: {exc}")

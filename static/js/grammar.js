@@ -211,7 +211,7 @@ async function submitQuestion(questionText) {
 
     if (res.llm_unavailable) {
       statusNote.textContent =
-        `${res.error || "AI backend unavailable."} Open Settings to configure Ollama or Gemini API.`;
+        `${res.error || "AI backend unavailable."} Open Settings to configure llama.cpp, Ollama, or Gemini API.`;
       statusNote.hidden = false;
       renderMessages(res.thread?.messages || existing?.messages || []);
       return;

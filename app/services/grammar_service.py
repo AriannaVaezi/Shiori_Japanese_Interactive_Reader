@@ -7,13 +7,18 @@ from typing import Any
 
 from app import db, llm
 
-_GRAMMAR_SYSTEM_PROMPT = """あなたは日本語の小説読解をサポートする親切な文法コーチです。
-学習者が小説を読んでいて引っかかった文（または表現・文法項目）について、前後の文脈を踏まえて簡潔で分かりやすく解説してください。
+_GRAMMAR_SYSTEM_PROMPT = """You are a friendly, concise Japanese grammar tutor helping an English-speaking learner read a Japanese novel.
 
-回答のルール:
-- 英語で分かりやすく解説しつつ、日本語の文法パターン・例文はしっかり日本語で示すこと（学習者が「日本語だけで」と頼んだ場合は日本語で答える）。
-- **文の構造・文法ポイント**（助詞の働き、活用、省略された主語、慣用表現など）を箇条書きで整理すること。
-- 長すぎず、読んでいてすぐ小説に戻れる読みやすい長さにまとめること。"""
+Rules:
+- Write ALL translations and explanations strictly in clear, concise English (NEVER use Chinese, and do not write prose explanations in Japanese unless the learner explicitly asks you to reply in Japanese).
+- Quote only the relevant Japanese words, particles, and grammar patterns from the passage inline, followed by their English explanation.
+- Keep answers brief and scannable so the learner can return to reading quickly.
+
+Example format:
+**Meaning in context:** The morning breeze felt cool by the river.
+- **川辺で (かわべで)**: "by the riverside" (`で` marks the location).
+- **涼しく感じた**: adverbial `涼しく` + `感じた` ("felt cool").
+- **Nuance:** Calm, reflective tone fitting a quiet opening scene."""
 
 
 def _load_sentence_context(
@@ -123,32 +128,32 @@ async def ask_grammar(
         }
 
     if not prior_messages:
-        focus_line = f"特に気になる箇所: 「{clean_target}」\n" if clean_target else ""
+        focus_line = f"Focus phrase: 「{clean_target}」\n" if clean_target else ""
         ask_line = (
             clean_question
             if clean_question
-            else "この文の文法構造・使われている表現・ニュアンスを分かりやすく解説してください。"
+            else "In concise English only (no Chinese), translate this sentence in context and break down the key grammar, particles, conjugations, and nuance."
         )
         display_user_msg = clean_question or (
-            f"「{clean_target}」の意味・文法を教えて"
+            f'Explain the grammar and nuance of "{clean_target}" in this sentence.'
             if clean_target
-            else "この文の文法とニュアンスを解説して"
+            else "Break down the grammar and nuance of this sentence."
         )
         llm_prompt = (
-            f"【前後の文脈】\n{context_text}\n\n"
-            f"【対象の文】\n{resolved_sentence}\n"
+            f"[Surrounding Context]\n{context_text}\n\n"
+            f"[Target Sentence]\n{resolved_sentence}\n"
             f"{focus_line}\n"
-            f"【質問】\n{ask_line}"
+            f"[Question]\n{ask_line}"
         )
         llm_messages = [{"role": "user", "content": llm_prompt}]
     else:
         display_user_msg = clean_question
         # Rebuild full context on turn 1 so follow-ups retain passage awareness
         first_user = (
-            f"【前後の文脈】\n{context_text}\n\n"
-            f"【対象の文】\n{resolved_sentence}\n"
-            + (f"特に気になる箇所: 「{clean_target}」\n\n" if clean_target else "\n")
-            + f"【質問】\n{prior_messages[0]['content']}"
+            f"[Surrounding Context]\n{context_text}\n\n"
+            f"[Target Sentence]\n{resolved_sentence}\n"
+            + (f"Focus phrase: 「{clean_target}」\n\n" if clean_target else "\n")
+            + f"[Question]\n{prior_messages[0]['content']}"
         )
         llm_messages = [{"role": "user", "content": first_user}]
         for msg in prior_messages[1:]:

@@ -825,6 +825,19 @@ _OUTPUT_EVAL_SYSTEM_PROMPT = """あなたは親切な日本語学習コーチで
 }"""
 
 
+_OUTPUT_EVAL_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "passed": {"type": "boolean"},
+        "verdict": {"type": "string", "minLength": 1},
+        "grammar_tip": {"type": "string"},
+        "natural_version": {"type": "string"},
+    },
+    "required": ["passed", "verdict", "grammar_tip", "natural_version"],
+    "additionalProperties": False,
+}
+
+
 async def evaluate_output_sentence(
     *,
     target_word: str,
@@ -860,6 +873,7 @@ async def evaluate_output_sentence(
             system_prompt=_OUTPUT_EVAL_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
             expect_json=True,
+            json_schema=_OUTPUT_EVAL_JSON_SCHEMA,
         )
         parsed = llm.extract_json_object(raw_text)
         verdict = str(parsed.get("verdict") or "").strip()

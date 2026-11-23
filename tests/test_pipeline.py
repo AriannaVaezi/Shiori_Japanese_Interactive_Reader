@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from app import config, db, dictionary, llamacpp_manager, llm
 from app.epub_parser import parse_epub, read_epub_asset
 from app.main import app
-from app.services import quiz_service
+from app.services import grammar_service, lookup_service, quiz_service
 from app.tokenizer import (
     chunk_into_bunsetsu,
     extract_particle_quiz,
@@ -236,7 +236,9 @@ def test_offline_jamdict_multithreaded():
 def test_api_end_to_end(temp_env, monkeypatch: pytest.MonkeyPatch):
     jj_calls = 0
 
-    async def fake_generate_text(*, settings, system_prompt, messages, expect_json=False):
+    async def fake_generate_text(
+        *, settings, system_prompt, messages, expect_json=False, json_schema=None
+    ):
         nonlocal jj_calls
         if expect_json:
             jj_calls += 1
@@ -433,7 +435,9 @@ def test_bunsetsu_and_particle_helpers():
 
 
 def test_quiz_and_trouble_lifecycle(temp_env, monkeypatch: pytest.MonkeyPatch):
-    async def fake_generate_text(*, settings, system_prompt, messages, expect_json=False):
+    async def fake_generate_text(
+        *, settings, system_prompt, messages, expect_json=False, json_schema=None
+    ):
         if expect_json:
             return (
                 json.dumps(
@@ -959,7 +963,8 @@ def test_llamacpp_provider_and_settings(temp_env, monkeypatch: pytest.MonkeyPatc
 
         post_call = next(r for r in captured_requests if r[0] == "POST")
         assert post_call[1] == "http://127.0.0.1:8080/v1/chat/completions"
-        assert post_call[2]["response_format"] == {"type": "json_object"}
+        assert post_call[2]["response_format"]["type"] == "json_schema"
+        assert "simple_definition" in post_call[2]["response_format"]["json_schema"]["schema"]["required"]
         assert post_call[3]["Authorization"] == "Bearer local-secret-token-9999"
 
 
@@ -1079,6 +1084,14 @@ def test_long_term_quiz_mixing_and_output_eval(temp_env, monkeypatch: pytest.Mon
 def test_llamacpp_manager_and_autostart_settings(
     temp_env, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    # find_llama_server_binary prefers %LOCALAPPDATA%\Shiori\bin\llama-cuda\llama-server.exe
+    cuda_exe = tmp_path / "Shiori" / "bin" / "llama-cuda" / "llama-server.exe"
+    cuda_exe.parent.mkdir(parents=True)
+    cuda_exe.write_bytes(b"MZ")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(llamacpp_manager.sys, "platform", "win32")
+    assert llamacpp_manager.find_llama_server_binary() == cuda_exe
+
     # parse_local_host_port allows loopback and rejects remote hosts
     assert llamacpp_manager.parse_local_host_port("http://localhost:8080") == ("127.0.0.1", 8080)
     assert llamacpp_manager.parse_local_host_port("http://127.0.0.1") == ("127.0.0.1", 8080)
@@ -1188,3 +1201,173 @@ def test_llamacpp_manager_and_autostart_settings(
     )
     assert (text, provider, model_used) == ("了解", "llamacpp", "qwen2.5-7b")
     assert len(ensure_calls) == 1
+
+
+def test_jj_json_resilience_and_english_grammar_prompt(temp_env, monkeypatch: pytest.MonkeyPatch):
+    # 1) _llamacpp_chat falls back cleanly from json_schema (400) -> json_object (200)
+    sent_rf_types: list[str | None] = []
+
+    class FallbackResp:
+        def __init__(self, status_code: int, body: dict):
+            self.status_code = status_code
+            self._body = body
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError("err", request=None, response=None)
+
+        def json(self):
+            return self._body
+
+    class FallbackClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            rf = (json or {}).get("response_format")
+            rf_type = rf.get("type") if isinstance(rf, dict) else None
+            sent_rf_types.append(rf_type)
+            if rf_type == "json_schema":
+                return FallbackResp(400, {"error": "json_schema unsupported"})
+            return FallbackResp(
+                200,
+                {
+                    "model": "qwen2.5-7b",
+                    "choices": [{"message": {"content": '{"simple_definition": "静かな様子。"}'}}],
+                },
+            )
+
+    monkeypatch.setattr(llm.httpx, "AsyncClient", FallbackClient)
+    fb_text, fb_model = asyncio.run(
+        llm._llamacpp_chat(
+            "http://127.0.0.1:8080",
+            "qwen2.5-7b",
+            "sys",
+            [{"role": "user", "content": "hi"}],
+            expect_json=True,
+            json_schema=lookup_service._JJ_JSON_SCHEMA,
+        )
+    )
+    assert sent_rf_types == ["json_schema", "json_object"]
+    assert fb_model == "qwen2.5-7b"
+    assert "静かな様子。" in fb_text
+
+    # 2) _normalize_jj_payload handles Japanese/English key aliases and nested wrappers
+    norm_jp = lookup_service._normalize_jj_payload(
+        {
+            "意味": "たくさんの店が並ぶ通り。",
+            "品詞": "名詞",
+            "ニュアンス": "町の様子。",
+            "例文": [{"例文": "駅前の商店街を歩く。", "読み": "しょうてんがい"}],
+        }
+    )
+    assert norm_jp["simple_definition"] == "たくさんの店が並ぶ通り。"
+    assert norm_jp["part_of_speech"] == "名詞"
+    assert norm_jp["context_note"] == "町の様子。"
+    assert norm_jp["examples"] == [{"jp": "駅前の商店街を歩く。", "reading": "しょうてんがい"}]
+
+    norm_wrapped = lookup_service._normalize_jj_payload(
+        {"result": {"definition": "水がきれいで透きとおっていること。", "pos": "動詞"}}
+    )
+    assert norm_wrapped["simple_definition"] == "水がきれいで透きとおっていること。"
+    assert norm_wrapped["part_of_speech"] == "動詞"
+
+    # 3) lookup_jj retries once when first response omits simple_definition and succeeds on retry
+    jj_attempts: list[str] = []
+
+    async def fake_retry_generate(
+        *, settings, system_prompt, messages, expect_json=False, json_schema=None
+    ):
+        jj_attempts.append(messages[-1]["content"])
+        if len(jj_attempts) == 1:
+            return '{"part_of_speech": "名詞"}', "llamacpp", "qwen2.5-7b"
+        return (
+            json.dumps(
+                {
+                    "simple_definition": "町にある店の並び。",
+                    "part_of_speech": "名詞",
+                    "context_note": "日常の買い物をする場所。",
+                    "examples": [],
+                },
+                ensure_ascii=False,
+            ),
+            "llamacpp",
+            "qwen2.5-7b",
+        )
+
+    monkeypatch.setattr(llm, "generate_text", fake_retry_generate)
+    jj_res = asyncio.run(
+        lookup_service.lookup_jj(
+            lemma="商店街",
+            reading="しょうてんがい",
+            surface="商店街",
+            sentence_text="駅前に商店街がある。",
+        )
+    )
+    assert len(jj_attempts) == 2
+    assert "simple_definition" in jj_attempts[1]
+    assert jj_res["llm_unavailable"] is False
+    assert jj_res["jj"]["simple_definition"] == "町にある店の並び。"
+
+    # 4) ask_grammar sends English system & default user prompts and stores English display_user_msg
+    captured_grammar_calls: list[tuple[str, str]] = []
+
+    async def fake_grammar_generate(
+        *, settings, system_prompt, messages, expect_json=False, json_schema=None
+    ):
+        captured_grammar_calls.append((system_prompt, messages[-1]["content"]))
+        return (
+            "- **立ち並ぶ (たちならぶ)**: stand in a row.\n- Particle **には** marks the station area.",
+            "llamacpp",
+            "qwen2.5-7b",
+        )
+
+    monkeypatch.setattr(llm, "generate_text", fake_grammar_generate)
+    with TestClient(app) as client:
+        books = client.get("/api/books").json()["books"]
+        book1 = books[0]
+        ch1_idx = next(c["chapter_index"] for c in book1["chapters"] if c["title"] == "１")
+        client.get(f"/api/books/{book1['id']}/chapters/{ch1_idx}")
+
+        g_res = client.post(
+            "/api/grammar/ask",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s0",
+                "target_text": "",
+                "question": "",
+            },
+        )
+        assert g_res.status_code == 200
+        thread = g_res.json()["thread"]
+        assert thread["messages"][0]["content"] == "Break down the grammar and nuance of this sentence."
+
+        g_phrase = client.post(
+            "/api/grammar/ask",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s0",
+                "target_text": "立ち並ぶ",
+                "question": "",
+            },
+        )
+        assert g_phrase.status_code == 200
+        assert (
+            g_phrase.json()["thread"]["messages"][0]["content"]
+            == 'Explain the grammar and nuance of "立ち並ぶ" in this sentence.'
+        )
+
+    assert len(captured_grammar_calls) == 2
+    sys_p, user_p = captured_grammar_calls[0]
+    assert "strictly in clear, concise English" in sys_p
+    assert "[Target Sentence]" in user_p
+    assert "[Question]" in user_p
+    assert "concise English" in user_p

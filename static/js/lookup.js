@@ -76,7 +76,7 @@ function renderJJResult(data, anchorRect) {
     jjBody.hidden = true;
     jjError.textContent =
       `${data.error || "Local/Cloud AI explanation unavailable."} ` +
-      `You can configure Ollama or Gemini in Settings, or tap "英語を見る / Show English" below for instant offline JMdict definitions.`;
+      `You can configure llama.cpp, Ollama, or Gemini in Settings, or tap "英語を見る / Show English" below for instant offline JMdict definitions.`;
     jjError.hidden = false;
     if (anchorRect) positionPopover(anchorRect);
     return;
