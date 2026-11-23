@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app import config, db, llm
+from app import config, db, llamacpp_manager, llm
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
@@ -77,7 +78,7 @@ def get_settings():
 
 
 @router.put("/settings")
-def put_settings(req: SettingsUpdateRequest):
+async def put_settings(req: SettingsUpdateRequest):
     """Persist settings updates and return the sanitized public settings."""
     updates: dict[str, str] = {}
     data = req.model_dump(exclude_none=True)
@@ -103,6 +104,14 @@ def put_settings(req: SettingsUpdateRequest):
             updates[key] = str(val)
 
     saved = db.update_settings(updates)
+    if (
+        saved.get("llm_provider", "").strip().lower() == "llamacpp"
+        and saved.get("llamacpp_autostart", "true").strip().lower()
+        not in {"false", "0", "no", "off"}
+    ):
+        await asyncio.to_thread(llamacpp_manager.ensure_managed_server_running, saved)
+    else:
+        await asyncio.to_thread(llamacpp_manager.stop_managed_server)
     return _public_settings(saved)
 
 

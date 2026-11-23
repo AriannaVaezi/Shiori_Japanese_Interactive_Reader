@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import zipfile
@@ -1075,7 +1076,9 @@ def test_long_term_quiz_mixing_and_output_eval(temp_env, monkeypatch: pytest.Mon
         assert ev_down["llm_unavailable"] is True
 
 
-def test_llamacpp_manager_and_autostart_settings(temp_env, tmp_path: Path):
+def test_llamacpp_manager_and_autostart_settings(
+    temp_env, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     # parse_local_host_port allows loopback and rejects remote hosts
     assert llamacpp_manager.parse_local_host_port("http://localhost:8080") == ("127.0.0.1", 8080)
     assert llamacpp_manager.parse_local_host_port("http://127.0.0.1") == ("127.0.0.1", 8080)
@@ -1100,6 +1103,18 @@ def test_llamacpp_manager_and_autostart_settings(temp_env, tmp_path: Path):
         == explicit_model
     )
 
+    # Guard prevents spawning inside pytest unless allow_in_tests=True
+    assert (
+        llamacpp_manager.ensure_managed_server_running(
+            {
+                "llm_provider": "llamacpp",
+                "llamacpp_autostart": "true",
+                "llamacpp_model_path": str(real_model),
+            }
+        )
+        is False
+    )
+
     # ManagedLlamaServer skips spawning when disabled, non-llamacpp, or remote URL
     for cfg in (
         {"llm_provider": "ollama", "llamacpp_autostart": "true", "llamacpp_url": "http://127.0.0.1:8080"},
@@ -1110,7 +1125,20 @@ def test_llamacpp_manager_and_autostart_settings(temp_env, tmp_path: Path):
         assert mgr.start_if_needed(wait_timeout=0.5) is False
         assert mgr.proc is None
 
-    # Settings API persists llamacpp_model_path and llamacpp_autostart
+    # Settings API persists llamacpp_model_path & llamacpp_autostart and hooks lifecycle
+    ensure_calls: list[dict[str, str]] = []
+    stop_calls: list[bool] = []
+    monkeypatch.setattr(
+        llamacpp_manager,
+        "ensure_managed_server_running",
+        lambda s, *args, **kwargs: ensure_calls.append(dict(s)) or True,
+    )
+    monkeypatch.setattr(
+        llamacpp_manager,
+        "stop_managed_server",
+        lambda: stop_calls.append(True),
+    )
+
     with TestClient(app) as client:
         res = client.put(
             "/api/settings",
@@ -1124,7 +1152,39 @@ def test_llamacpp_manager_and_autostart_settings(temp_env, tmp_path: Path):
         body = res.json()
         assert body["llamacpp_model_path"] == str(real_model)
         assert body["llamacpp_autostart"] == "false"
+        assert len(ensure_calls) == 0
+        assert len(stop_calls) == 1
+
+        # Enabling autostart on llamacpp triggers ensure_managed_server_running
+        res_on = client.put(
+            "/api/settings",
+            json={"llm_provider": "llamacpp", "llamacpp_autostart": "true"},
+        )
+        assert res_on.status_code == 200
+        assert len(ensure_calls) == 1
+
+        # Switching to ollama triggers stop_managed_server
+        res_off = client.put("/api/settings", json={"llm_provider": "ollama"})
+        assert res_off.status_code == 200
+        assert len(stop_calls) == 2
 
         fetched = client.get("/api/settings").json()
         assert fetched["llamacpp_model_path"] == str(real_model)
-        assert fetched["llamacpp_autostart"] == "false"
+        assert fetched["llamacpp_autostart"] == "true"
+
+    # Calling llm.generate_text for llamacpp invokes ensure_managed_server_running
+    ensure_calls.clear()
+    monkeypatch.setattr(llm, "_llamacpp_chat", AsyncMock(return_value=("了解", "qwen2.5-7b")))
+    text, provider, model_used = asyncio.run(
+        llm.generate_text(
+            settings={
+                "llm_provider": "llamacpp",
+                "llamacpp_url": "http://127.0.0.1:8080",
+                "llamacpp_model": "qwen2.5-7b",
+            },
+            system_prompt="sys",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+    )
+    assert (text, provider, model_used) == ("了解", "llamacpp", "qwen2.5-7b")
+    assert len(ensure_calls) == 1

@@ -12,6 +12,8 @@ import httpx
 from google import genai
 from google.genai import types
 
+from app import llamacpp_manager
+
 _PREFERRED_OLLAMA_PREFIXES = (
     "qwen3",
     "qwen2.5",
@@ -246,6 +248,7 @@ async def generate_text(
     provider = (settings.get("llm_provider") or "llamacpp").strip().lower()
 
     if provider == "llamacpp":
+        await asyncio.to_thread(llamacpp_manager.ensure_managed_server_running, settings)
         base_url = (settings.get("llamacpp_url") or "http://127.0.0.1:8080").strip()
         api_key = (settings.get("llamacpp_api_key") or "").strip()
         model = (settings.get("llamacpp_model") or "").strip()

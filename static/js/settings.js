@@ -165,6 +165,9 @@ export async function openSettingsModal() {
     btnClearGeminiKey.hidden = true;
   }
 
+  populateSelect(selectLlamaModel, [], null, s.llamacpp_model || "", "Auto / server default");
+  populateSelect(selectOllamaModel, [], null, s.ollama_model || "", "Auto-detect best local model");
+
   modal.hidden = false;
   if (s.llm_provider === "ollama") {
     await refreshOllamaModels(inputOllamaUrl.value, s.ollama_model || "");
@@ -215,10 +218,14 @@ export function initSettings() {
   btnTest.addEventListener("click", async () => {
     btnTest.disabled = true;
     testResult.className = "test-result";
-    testResult.textContent = "Testing connection…";
+    const selectedProvider = getSelectedProvider();
+    testResult.textContent =
+      selectedProvider === "llamacpp"
+        ? "Starting llama.cpp (if needed) & testing connection…"
+        : "Testing connection…";
     try {
       const payload = {
-        llm_provider: getSelectedProvider(),
+        llm_provider: selectedProvider,
         llamacpp_url: inputLlamaUrl.value.trim(),
         llamacpp_model: selectLlamaModel.value,
         ollama_url: inputOllamaUrl.value.trim(),
@@ -250,9 +257,12 @@ export function initSettings() {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     btnSave.disabled = true;
+    const selectedProvider = getSelectedProvider();
+    btnSave.textContent =
+      selectedProvider === "llamacpp" ? "Saving & starting llama.cpp…" : "Saving…";
     try {
       const payload = {
-        llm_provider: getSelectedProvider(),
+        llm_provider: selectedProvider,
         llamacpp_url: inputLlamaUrl.value.trim() || "http://127.0.0.1:8080",
         llamacpp_model: selectLlamaModel.value,
         llamacpp_model_path: inputLlamaModelPath.value.trim(),
@@ -277,6 +287,7 @@ export function initSettings() {
       testResult.textContent = `Could not save: ${err.message}`;
     } finally {
       btnSave.disabled = false;
+      btnSave.textContent = "Save Settings";
     }
   });
 
