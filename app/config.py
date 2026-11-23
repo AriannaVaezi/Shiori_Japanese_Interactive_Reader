@@ -18,6 +18,8 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "llamacpp_url": "http://127.0.0.1:8080",
     "llamacpp_model": "",
     "llamacpp_api_key": "",
+    "llamacpp_model_path": "",
+    "llamacpp_autostart": "true",
     "ollama_url": "http://localhost:11434",
     "ollama_model": "",
     "gemini_api_key": "",

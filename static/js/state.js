@@ -5,6 +5,8 @@ export const state = {
     llm_provider: "llamacpp",
     llamacpp_url: "http://127.0.0.1:8080",
     llamacpp_model: "",
+    llamacpp_model_path: "",
+    llamacpp_autostart: "true",
     has_llamacpp_key: false,
     llamacpp_api_key_masked: "",
     ollama_url: "http://localhost:11434",

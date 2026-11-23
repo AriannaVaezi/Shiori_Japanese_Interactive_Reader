@@ -1108,6 +1108,15 @@ html[data-furigana="off"] ruby rt {
   gap: 14px;
 }
 
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
 .test-row {
   display: flex;
   align-items: center;

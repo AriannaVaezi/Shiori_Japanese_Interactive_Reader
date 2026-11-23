@@ -241,6 +241,15 @@
           </div>
 
           <div class="field-group">
+            <label class="field-label" for="input-llamacpp-model-path">Local GGUF Model Path (optional, for <code>run.py</code> auto-start)</label>
+            <input id="input-llamacpp-model-path" type="text" placeholder="Leave blank to auto-detect in LocalAppData\Shiori\models" />
+            <label class="checkbox-row">
+              <input id="chk-llamacpp-autostart" type="checkbox" checked />
+              <span>Auto-start <code>llama-server</code> when launching <code>run.py</code></span>
+            </label>
+          </div>
+
+          <div class="field-group">
             <label class="field-label" for="input-llamacpp-key">API Key (optional)</label>
             <div class="inline-row">
               <input id="input-llamacpp-key" type="password" autocomplete="off" placeholder="Optional Bearer token" />

@@ -15,7 +15,7 @@ import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
-from app import config, db, dictionary, llm
+from app import config, db, dictionary, llamacpp_manager, llm
 from app.epub_parser import parse_epub, read_epub_asset
 from app.main import app
 from app.services import quiz_service
@@ -1073,3 +1073,58 @@ def test_long_term_quiz_mixing_and_output_eval(temp_env, monkeypatch: pytest.Mon
             },
         ).json()
         assert ev_down["llm_unavailable"] is True
+
+
+def test_llamacpp_manager_and_autostart_settings(temp_env, tmp_path: Path):
+    # parse_local_host_port allows loopback and rejects remote hosts
+    assert llamacpp_manager.parse_local_host_port("http://localhost:8080") == ("127.0.0.1", 8080)
+    assert llamacpp_manager.parse_local_host_port("http://127.0.0.1") == ("127.0.0.1", 8080)
+    assert llamacpp_manager.parse_local_host_port("http://192.168.1.50:8080") is None
+    assert llamacpp_manager.parse_local_host_port("ftp://127.0.0.1:8080") is None
+
+    # resolve_model_path supports explicit path & auto-discovery skipping .part/.tmp files
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    (models_dir / "downloading.part.gguf").write_bytes(b"GGUF")
+    (models_dir / "temp.tmp.gguf").write_bytes(b"GGUF")
+    (models_dir / "incomplete.gguf.part").write_bytes(b"GGUF")
+    real_model = models_dir / "qwen-local.gguf"
+    real_model.write_bytes(b"GGUF")
+
+    explicit_model = tmp_path / "explicit.gguf"
+    explicit_model.write_bytes(b"GGUF")
+
+    assert llamacpp_manager.resolve_model_path("", extra_dirs=[models_dir]) == real_model
+    assert (
+        llamacpp_manager.resolve_model_path(str(explicit_model), extra_dirs=[models_dir])
+        == explicit_model
+    )
+
+    # ManagedLlamaServer skips spawning when disabled, non-llamacpp, or remote URL
+    for cfg in (
+        {"llm_provider": "ollama", "llamacpp_autostart": "true", "llamacpp_url": "http://127.0.0.1:8080"},
+        {"llm_provider": "llamacpp", "llamacpp_autostart": "false", "llamacpp_url": "http://127.0.0.1:8080"},
+        {"llm_provider": "llamacpp", "llamacpp_autostart": "true", "llamacpp_url": "http://10.0.0.5:8080"},
+    ):
+        mgr = llamacpp_manager.ManagedLlamaServer(cfg, log_path=tmp_path / "srv.log")
+        assert mgr.start_if_needed(wait_timeout=0.5) is False
+        assert mgr.proc is None
+
+    # Settings API persists llamacpp_model_path and llamacpp_autostart
+    with TestClient(app) as client:
+        res = client.put(
+            "/api/settings",
+            json={
+                "llm_provider": "llamacpp",
+                "llamacpp_model_path": str(real_model),
+                "llamacpp_autostart": "false",
+            },
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["llamacpp_model_path"] == str(real_model)
+        assert body["llamacpp_autostart"] == "false"
+
+        fetched = client.get("/api/settings").json()
+        assert fetched["llamacpp_model_path"] == str(real_model)
+        assert fetched["llamacpp_autostart"] == "false"

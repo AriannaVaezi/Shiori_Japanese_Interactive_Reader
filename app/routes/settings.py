@@ -19,6 +19,8 @@ class SettingsUpdateRequest(BaseModel):
     llamacpp_model: str | None = None
     llamacpp_api_key: str | None = None
     clear_llamacpp_key: bool = False
+    llamacpp_model_path: str | None = None
+    llamacpp_autostart: str | None = None
     ollama_url: str | None = None
     ollama_model: str | None = None
     gemini_api_key: str | None = None

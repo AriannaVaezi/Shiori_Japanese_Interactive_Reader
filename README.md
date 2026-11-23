@@ -78,6 +78,7 @@ Trigger a 5-question round from **Clear Chapter Quiz (5 Qs)** at the end of a ch
 │   ├── tokenizer.py             # Ruby-aware SudachiPy tokenizer, bunsetsu & particle helpers
 │   ├── dictionary.py            # Thread-safe offline Jamdict wrapper
 │   ├── llm.py                   # Unified llama.cpp / Ollama / Gemini API client
+│   ├── llamacpp_manager.py      # Local llama-server discovery & auto-start manager
 │   ├── routes/                  # JSON API endpoints (books, lookup, grammar, notes, quiz, settings)
 │   └── services/                # Domain logic for books, lookup, grammar, notes, and quizzes
 ├── static/
@@ -131,11 +132,11 @@ Trigger a 5-question round from **Clear Chapter Quiz (5 Qs)** at the end of a ch
    Place DRM-free Japanese `.epub` files inside the `books/` folder.
 
 4. **Configure an AI provider (optional):**
-   - **`llama.cpp` (`llama-server`, Default Local & Free):** Start `llama-server` with a GGUF model on port `8080` (Shiori connects to `http://127.0.0.1:8080` by default):
+   - **`llama.cpp` (`llama-server`, Default Local & Free):** Place a `.gguf` model in `%LOCALAPPDATA%\Shiori\models` (Windows) or `~/models`—or set an explicit `.gguf` path in **Settings**. When `llama.cpp` is selected and auto-start is enabled, `uv run python run.py` automatically launches `llama-server` on `http://127.0.0.1:8080` and stops it when you exit. You can also run it manually:
      ```powershell
-     llama-server -m path\to\model.gguf --port 8080
+     llama-server -m path\to\model.gguf --port 8080 -ngl 99
      ```
-     Open **Settings** to adjust the URL, optional API key, or refresh detected models from `/v1/models`.
+     Open **Settings** to adjust the URL, GGUF path, auto-start toggle, optional API key, or refresh detected models from `/v1/models`.
    - **Ollama (Local & Free):** Switch **Provider** to **Ollama (Local)** in **Settings**, start Ollama, and pull a Japanese-capable model:
      ```powershell
      ollama pull qwen3:8b
@@ -151,6 +152,8 @@ Trigger a 5-question round from **Clear Chapter Quiz (5 Qs)** at the end of a ch
 ```powershell
 uv run python run.py
 ```
+
+When `llama.cpp (Local)` is enabled with a local `.gguf` model, `run.py` automatically starts `llama-server` in the background (logged to `data/llama-server.log`) and shuts it down cleanly when you close the app.
 
 Open **`http://127.0.0.1:8000`** in your browser.
 

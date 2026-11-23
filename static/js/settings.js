@@ -17,6 +17,8 @@ const inputLlamaUrl = document.getElementById("input-llamacpp-url");
 const btnRefreshLlama = document.getElementById("btn-refresh-llamacpp");
 const selectLlamaModel = document.getElementById("select-llamacpp-model");
 const llamacppHint = document.getElementById("llamacpp-model-hint");
+const inputLlamaModelPath = document.getElementById("input-llamacpp-model-path");
+const chkLlamaAutostart = document.getElementById("chk-llamacpp-autostart");
 const inputLlamaKey = document.getElementById("input-llamacpp-key");
 const btnClearLlamaKey = document.getElementById("btn-clear-llamacpp-key");
 const llamacppKeyHint = document.getElementById("llamacpp-key-hint");
@@ -140,6 +142,8 @@ export async function openSettingsModal() {
   setSelectedProvider(s.llm_provider);
 
   inputLlamaUrl.value = s.llamacpp_url || "http://127.0.0.1:8080";
+  inputLlamaModelPath.value = s.llamacpp_model_path || "";
+  chkLlamaAutostart.checked = s.llamacpp_autostart !== "false";
   inputLlamaKey.value = "";
   if (s.has_llamacpp_key) {
     llamacppKeyHint.textContent = `Saved token: ${s.llamacpp_api_key_masked} (leave blank to keep)`;
@@ -251,6 +255,8 @@ export function initSettings() {
         llm_provider: getSelectedProvider(),
         llamacpp_url: inputLlamaUrl.value.trim() || "http://127.0.0.1:8080",
         llamacpp_model: selectLlamaModel.value,
+        llamacpp_model_path: inputLlamaModelPath.value.trim(),
+        llamacpp_autostart: chkLlamaAutostart.checked ? "true" : "false",
         clear_llamacpp_key: clearLlamaKeyFlag,
         ollama_url: inputOllamaUrl.value.trim() || "http://localhost:11434",
         ollama_model: selectOllamaModel.value,
