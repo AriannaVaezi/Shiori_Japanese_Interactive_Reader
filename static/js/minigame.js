@@ -1,6 +1,7 @@
-/** Adaptive 5-question chapter-end / timed mini-game (Cloze, Bunsetsu Scramble, Particle Fix). */
+/** Adaptive 5-question spaced mini-game (Typed Reading, Match-Up, Meaning, Scramble, Particle, Cloze, Sentence Output). */
 
 import { api } from "./api.js";
+import { normalizeKanaInput, romajiToHiragana } from "./romaji.js";
 import { state } from "./state.js";
 
 const modal = document.getElementById("quiz-modal");
@@ -13,10 +14,26 @@ const loadingEl = document.getElementById("quiz-loading");
 const errorEl = document.getElementById("quiz-error");
 const stageEl = document.getElementById("quiz-stage");
 const kindBadge = document.getElementById("quiz-kind-badge");
+const agedBadge = document.getElementById("quiz-aged-badge");
 const btnHint = document.getElementById("btn-quiz-hint");
 const hintBox = document.getElementById("quiz-hint-box");
 const wordHero = document.getElementById("quiz-word-hero");
 const promptSentence = document.getElementById("quiz-prompt-sentence");
+
+const typedEl = document.getElementById("quiz-typed");
+const inputReading = document.getElementById("input-quiz-reading");
+const btnTypedCheck = document.getElementById("btn-typed-check");
+const kanaPreview = document.getElementById("quiz-kana-preview");
+const btnTypedShowChoices = document.getElementById("btn-typed-show-choices");
+
+const outputEl = document.getElementById("quiz-output");
+const outputMeaning = document.getElementById("quiz-output-meaning");
+const inputOutput = document.getElementById("input-quiz-output");
+const btnOutputSkip = document.getElementById("btn-output-skip");
+const btnOutputCheck = document.getElementById("btn-output-check");
+const outputSelfCheck = document.getElementById("quiz-output-selfcheck");
+const btnOutputSelfPass = document.getElementById("btn-output-self-pass");
+const btnOutputSelfRetry = document.getElementById("btn-output-self-retry");
 
 const choicesEl = document.getElementById("quiz-choices");
 const matchEl = document.getElementById("quiz-match");
@@ -98,7 +115,7 @@ function renderScrambleChips() {
   btnScrambleClear.disabled = sessionState.answered || !selectedIndices.length;
 }
 
-function showFeedback(isCorrect, q) {
+function showFeedback(isCorrect, q, opts = {}) {
   sessionState.answered = true;
   sessionState.results.push({
     question_id: q.question_id,
@@ -106,15 +123,49 @@ function showFeedback(isCorrect, q) {
     trouble_item_id: q.trouble_item_id ?? null,
     trouble_item_ids: q.trouble_item_ids ?? [],
     correct: isCorrect,
+    skipped: Boolean(opts.skipped),
   });
 
   feedbackEl.hidden = false;
-  feedbackBadge.className = `quiz-feedback-badge ${isCorrect ? "ok" : "err"}`;
-  feedbackBadge.textContent = isCorrect ? "✓ Correct!" : "✗ Not quite";
-  feedbackFull.textContent = q.full_sentence || "";
-  feedbackExp.textContent = q.explanation && q.explanation !== q.full_sentence ? q.explanation : "";
+  if (opts.skipped) {
+    feedbackBadge.className = "quiz-feedback-badge";
+    feedbackBadge.textContent = "Skipped (not scored)";
+  } else {
+    feedbackBadge.className = `quiz-feedback-badge ${isCorrect ? "ok" : "err"}`;
+    feedbackBadge.textContent = opts.badgeText || (isCorrect ? "✓ Correct!" : "✗ Not quite");
+  }
+  feedbackFull.textContent = opts.fullText ?? q.full_sentence ?? "";
+  feedbackExp.textContent =
+    opts.expText ??
+    (q.explanation && q.explanation !== q.full_sentence ? q.explanation : "");
   btnNext.textContent =
     sessionState.index + 1 >= sessionState.questions.length ? "Finish Round →" : "Next →";
+}
+
+function renderChoiceButtons(q) {
+  choicesEl.hidden = false;
+  choicesEl.replaceChildren();
+
+  (q.choices || []).forEach((choice, idx) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn quiz-choice-btn";
+    btn.dataset.choice = choice;
+    btn.textContent = `${idx + 1}. ${choice}`;
+    btn.addEventListener("click", () => {
+      if (sessionState.answered) return;
+      const isCorrect = choice === q.correct_answer;
+      [...choicesEl.children].forEach((b) => {
+        b.disabled = true;
+        if (b.dataset.choice === q.correct_answer) b.classList.add("correct");
+        else if (b === btn && !isCorrect) b.classList.add("wrong");
+      });
+      inputReading.disabled = true;
+      btnTypedCheck.disabled = true;
+      showFeedback(isCorrect, q);
+    });
+    choicesEl.appendChild(btn);
+  });
 }
 
 function renderMatchPairs(q) {
@@ -225,10 +276,15 @@ function renderQuestion() {
   hintBox.hidden = true;
   wordHero.hidden = true;
   choicesEl.hidden = true;
+  typedEl.hidden = true;
+  outputEl.hidden = true;
+  outputSelfCheck.hidden = true;
   scrambleEl.hidden = true;
   matchEl.hidden = true;
 
   kindBadge.textContent = q.prompt_label || q.kind;
+  agedBadge.hidden = !q.is_aged;
+
   if (q.hint) {
     btnHint.hidden = false;
     hintBox.textContent = q.hint;
@@ -250,6 +306,36 @@ function renderQuestion() {
     return;
   }
 
+  if (q.kind === "typed_reading") {
+    wordHero.textContent = q.prompt_word || q.target_display;
+    wordHero.hidden = false;
+    promptSentence.textContent = q.prompt_text || "Type the reading in romaji or hiragana:";
+    typedEl.hidden = false;
+    inputReading.value = "";
+    inputReading.disabled = false;
+    btnTypedCheck.disabled = false;
+    kanaPreview.textContent = "—";
+    btnTypedShowChoices.hidden = !(q.choices && q.choices.length);
+    requestAnimationFrame(() => inputReading.focus());
+    return;
+  }
+
+  if (q.kind === "sentence_output") {
+    wordHero.textContent = q.prompt_word || q.target_display;
+    wordHero.hidden = false;
+    promptSentence.textContent = q.prompt_text || "";
+    outputMeaning.textContent = q.meaning_hint ? `Meaning: ${q.meaning_hint}` : "";
+    outputMeaning.hidden = !q.meaning_hint;
+    outputEl.hidden = false;
+    inputOutput.value = "";
+    inputOutput.disabled = false;
+    btnOutputCheck.disabled = false;
+    btnOutputSkip.disabled = false;
+    btnOutputCheck.textContent = "Check with AI";
+    requestAnimationFrame(() => inputOutput.focus());
+    return;
+  }
+
   if (q.prompt_word) {
     wordHero.textContent = q.prompt_word;
     wordHero.hidden = false;
@@ -260,27 +346,20 @@ function renderQuestion() {
     promptSentence.textContent = q.blanked_sentence || "";
   }
 
-  choicesEl.hidden = false;
-  choicesEl.replaceChildren();
+  renderChoiceButtons(q);
+}
 
-  (q.choices || []).forEach((choice, idx) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn quiz-choice-btn";
-    btn.dataset.choice = choice;
-    btn.textContent = `${idx + 1}. ${choice}`;
-    btn.addEventListener("click", () => {
-      if (sessionState.answered) return;
-      const isCorrect = choice === q.correct_answer;
-      [...choicesEl.children].forEach((b) => {
-        b.disabled = true;
-        if (b.dataset.choice === q.correct_answer) b.classList.add("correct");
-        else if (b === btn && !isCorrect) b.classList.add("wrong");
-      });
-      showFeedback(isCorrect, q);
-    });
-    choicesEl.appendChild(btn);
-  });
+function formatStageOutcome(item) {
+  if (item.retired || (item.memory_stage || 0) >= 3) {
+    return `${item.display_text} (Mastered & retired!)`;
+  }
+  if ((item.memory_stage || 0) === 1) {
+    return `${item.display_text} (Stage 1 · 20h cool-down)`;
+  }
+  if ((item.memory_stage || 0) === 2) {
+    return `${item.display_text} (Stage 2 · 3-day cool-down)`;
+  }
+  return `${item.display_text} (Score -> ${Number(item.trouble_score).toFixed(1)})`;
 }
 
 async function finishRound() {
@@ -289,9 +368,10 @@ async function finishRound() {
   progressLabel.textContent = "Round Complete";
   progressFill.style.width = "100%";
 
+  const scoredLocal = sessionState.results.filter((r) => !r.skipped);
   let summary = {
-    score: sessionState.results.filter((r) => r.correct).length,
-    total: sessionState.results.length,
+    score: scoredLocal.filter((r) => r.correct).length,
+    total: scoredLocal.length,
     conquered: [],
     still_tricky: [],
   };
@@ -309,18 +389,16 @@ async function finishRound() {
 
   scoreNumEl.textContent = `${summary.score} / ${summary.total}`;
   scoreSubEl.textContent =
-    summary.score === summary.total
-      ? "Clean sweep! Zero flashcard backlog."
-      : "Round complete — missed items stay lightly highlighted for next time.";
+    summary.total > 0 && summary.score === summary.total
+      ? "Clean sweep! Passed items enter cool-down spacing — zero review backlog."
+      : "Round complete — missed items reset to Stage 0 for fresh practice.";
 
   conqueredList.replaceChildren();
   if (summary.conquered?.length) {
     conqueredWrap.hidden = false;
     for (const item of summary.conquered) {
       const li = document.createElement("li");
-      li.textContent = item.retired
-        ? `${item.display_text} (Mastered & retired!)`
-        : `${item.display_text} (Score lowered -> ${Number(item.trouble_score).toFixed(1)})`;
+      li.textContent = formatStageOutcome(item);
       conqueredList.appendChild(li);
     }
   } else {
@@ -332,7 +410,7 @@ async function finishRound() {
     trickyWrap.hidden = false;
     for (const item of summary.still_tricky) {
       const li = document.createElement("li");
-      li.textContent = `${item.display_text} (Score: ${Number(item.trouble_score).toFixed(1)})`;
+      li.textContent = `${item.display_text} (Reset to Stage 0 · Score: ${Number(item.trouble_score).toFixed(1)})`;
       trickyList.appendChild(li);
     }
   } else {
@@ -435,6 +513,122 @@ export function initMiniGame({ onQuizCompleted, onNextChapter, onBackToLibrary }
     hintBox.hidden = !hintBox.hidden;
   });
 
+  // Typed Reading Recall handlers
+  inputReading.addEventListener("input", () => {
+    const hira = romajiToHiragana(inputReading.value);
+    kanaPreview.textContent = hira || "—";
+  });
+
+  const submitTypedReading = () => {
+    if (!sessionState || sessionState.answered) return;
+    const q = sessionState.questions[sessionState.index];
+    const userKana = normalizeKanaInput(inputReading.value);
+    if (!userKana) return;
+    const expected = normalizeKanaInput(q.correct_answer);
+    const isCorrect = userKana === expected;
+    inputReading.disabled = true;
+    btnTypedCheck.disabled = true;
+    btnTypedShowChoices.hidden = true;
+    showFeedback(isCorrect, q);
+  };
+
+  btnTypedCheck.addEventListener("click", submitTypedReading);
+  inputReading.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !sessionState?.answered) {
+      e.preventDefault();
+      e.stopPropagation();
+      submitTypedReading();
+    }
+  });
+
+  btnTypedShowChoices.addEventListener("click", () => {
+    if (!sessionState || sessionState.answered) return;
+    const q = sessionState.questions[sessionState.index];
+    btnTypedShowChoices.hidden = true;
+    renderChoiceButtons(q);
+  });
+
+  // 1-Sentence Output Challenge handlers
+  btnOutputSkip.addEventListener("click", () => {
+    if (!sessionState || sessionState.answered) return;
+    const q = sessionState.questions[sessionState.index];
+    inputOutput.disabled = true;
+    btnOutputCheck.disabled = true;
+    btnOutputSkip.disabled = true;
+    showFeedback(true, q, { skipped: true });
+  });
+
+  btnOutputCheck.addEventListener("click", async () => {
+    if (!sessionState || sessionState.answered) return;
+    const q = sessionState.questions[sessionState.index];
+    const userSentence = inputOutput.value.trim();
+    if (!userSentence) return;
+
+    btnOutputCheck.disabled = true;
+    btnOutputSkip.disabled = true;
+    btnOutputCheck.textContent = "Checking…";
+    outputSelfCheck.hidden = true;
+
+    try {
+      const res = await api.evaluateOutput({
+        target_word: q.prompt_word || q.target_display,
+        reading: q.reading || "",
+        item_type: q.item_type || "word",
+        user_sentence: userSentence,
+        meaning_hint: q.meaning_hint || "",
+      });
+
+      if (res.llm_unavailable) {
+        btnOutputCheck.disabled = false;
+        btnOutputSkip.disabled = false;
+        btnOutputCheck.textContent = "Check with AI";
+        outputSelfCheck.hidden = false;
+        return;
+      }
+
+      inputOutput.disabled = true;
+      showFeedback(Boolean(res.passed), q, {
+        badgeText: res.passed ? "✓ Nice sentence!" : "✎ Good try — check the tip",
+        fullText: res.natural_version ? `Natural phrasing: ${res.natural_version}` : userSentence,
+        expText: [res.verdict, res.grammar_tip].filter(Boolean).join(" "),
+      });
+    } catch {
+      btnOutputCheck.disabled = false;
+      btnOutputSkip.disabled = false;
+      btnOutputCheck.textContent = "Check with AI";
+      outputSelfCheck.hidden = false;
+    }
+  });
+
+  btnOutputSelfPass.addEventListener("click", () => {
+    if (!sessionState || sessionState.answered) return;
+    const q = sessionState.questions[sessionState.index];
+    inputOutput.disabled = true;
+    btnOutputCheck.disabled = true;
+    btnOutputSkip.disabled = true;
+    outputSelfCheck.hidden = true;
+    showFeedback(true, q, {
+      badgeText: "✓ Self-checked",
+      fullText: inputOutput.value.trim(),
+      expText: q.example_hint ? `Example: ${q.example_hint}` : "",
+    });
+  });
+
+  btnOutputSelfRetry.addEventListener("click", () => {
+    if (!sessionState || sessionState.answered) return;
+    const q = sessionState.questions[sessionState.index];
+    inputOutput.disabled = true;
+    btnOutputCheck.disabled = true;
+    btnOutputSkip.disabled = true;
+    outputSelfCheck.hidden = true;
+    showFeedback(false, q, {
+      badgeText: "Marked for extra practice",
+      fullText: q.example_hint ? `Example: ${q.example_hint}` : q.target_display,
+      expText: q.meaning_hint || "",
+    });
+  });
+
+  // Scramble handlers
   btnScrambleClear.addEventListener("click", () => {
     if (!sessionState || sessionState.answered) return;
     sessionState.scrambleSelected = [];
@@ -471,6 +665,9 @@ export function initMiniGame({ onQuizCompleted, onNextChapter, onBackToLibrary }
       return;
     }
     if (!sessionState) return;
+    const activeTag = document.activeElement?.tagName;
+    if (activeTag === "INPUT" || activeTag === "TEXTAREA") return;
+
     if (!sessionState.answered && ["1", "2", "3", "4"].includes(e.key)) {
       const idx = parseInt(e.key, 10) - 1;
       const choiceBtn = choicesEl.children[idx];

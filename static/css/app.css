@@ -1075,8 +1075,14 @@ html[data-furigana="off"] ruby rt {
 
 .segmented {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 8px;
+}
+
+@media (max-width: 560px) {
+  .segmented {
+    grid-template-columns: 1fr;
+  }
 }
 
 .seg-option {
@@ -1642,4 +1648,71 @@ html[data-furigana="off"] ruby rt {
   .match-columns {
     grid-template-columns: 1fr;
   }
+}
+
+.quiz-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aged-badge {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(217, 155, 38, 0.18);
+  color: #8f5e00;
+  font-weight: 600;
+}
+
+html[data-theme="dark"] .aged-badge {
+  color: #f3cd7a;
+}
+
+.quiz-typed,
+.quiz-output {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.quiz-typed input,
+.quiz-output textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-book);
+  font-size: 16px;
+}
+
+.typed-subrow,
+.output-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.output-actions {
+  justify-content: flex-end;
+}
+
+.output-selfcheck {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+}
+
+.output-selfcheck-btns {
+  display: flex;
+  gap: 6px;
 }

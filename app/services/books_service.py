@@ -222,7 +222,10 @@ def get_chapter(book_id: int, chapter_index: int) -> dict[str, Any] | None:
         sticky_keys = [r["item_key"] for r in sticky_rows]
 
         trouble_rows = conn.execute(
-            "SELECT item_key FROM trouble_items WHERE item_type = 'word' AND retired = 0 AND trouble_score > 0.0"
+            """
+            SELECT item_key FROM trouble_items
+            WHERE item_type = 'word' AND retired = 0 AND memory_stage = 0 AND trouble_score > 0.0
+            """
         ).fetchall()
         trouble_keys = [r["item_key"] for r in trouble_rows]
 

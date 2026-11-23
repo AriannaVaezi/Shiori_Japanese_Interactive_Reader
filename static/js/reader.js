@@ -153,7 +153,9 @@ export async function refreshChapterHighlights() {
       }),
     ]);
     const active = troubleRes.items || [];
-    const troubleKeys = active.filter((i) => i.item_type === "word").map((i) => i.item_key);
+    const troubleKeys = active
+      .filter((i) => i.item_type === "word" && (i.memory_stage || 0) === 0)
+      .map((i) => i.item_key);
     const stickyKeys = active
       .filter((i) => i.item_type === "word" && i.trouble_score >= 3.0)
       .map((i) => i.item_key);

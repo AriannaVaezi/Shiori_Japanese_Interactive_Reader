@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -135,6 +135,8 @@ def init_db() -> None:
                 correct_count INTEGER NOT NULL DEFAULT 0,
                 wrong_count INTEGER NOT NULL DEFAULT 0,
                 retired INTEGER NOT NULL DEFAULT 0,
+                memory_stage INTEGER NOT NULL DEFAULT 0,
+                next_review_after TEXT,
                 updated_at TEXT NOT NULL,
                 UNIQUE(item_type, item_key)
             );
@@ -185,6 +187,8 @@ def init_db() -> None:
             ("correct_count", "INTEGER NOT NULL DEFAULT 0"),
             ("wrong_count", "INTEGER NOT NULL DEFAULT 0"),
             ("retired", "INTEGER NOT NULL DEFAULT 0"),
+            ("memory_stage", "INTEGER NOT NULL DEFAULT 0"),
+            ("next_review_after", "TEXT"),
         ):
             if col_name not in existing_cols:
                 conn.execute(f"ALTER TABLE trouble_items ADD COLUMN {col_name} {col_def}")
@@ -273,6 +277,8 @@ def record_trouble_event(
                 grammar_asks = trouble_items.grammar_asks + excluded.grammar_asks,
                 trouble_score = trouble_items.trouble_score + ?,
                 retired = 0,
+                memory_stage = 0,
+                next_review_after = NULL,
                 updated_at = excluded.updated_at
             """,
             (
@@ -297,10 +303,15 @@ def record_trouble_event(
 def set_trouble_retired(item_id: int, retired: bool) -> dict | None:
     """Toggle the retired status of a trouble item."""
     now = utc_now_iso()
+    new_stage = 3 if retired else 0
     with get_conn() as conn:
         cur = conn.execute(
-            "UPDATE trouble_items SET retired = ?, updated_at = ? WHERE id = ?",
-            (1 if retired else 0, now, item_id),
+            """
+            UPDATE trouble_items
+            SET retired = ?, memory_stage = ?, next_review_after = NULL, updated_at = ?
+            WHERE id = ?
+            """,
+            (1 if retired else 0, new_stage, now, item_id),
         )
         if cur.rowcount == 0:
             return None
@@ -308,27 +319,72 @@ def set_trouble_retired(item_id: int, retired: bool) -> dict | None:
     return dict(row) if row else None
 
 
-def apply_quiz_item_result(item_id: int, correct: bool) -> dict | None:
-    """Update trouble item score and retirement state after a quiz answer."""
-    now = utc_now_iso()
+def _parse_iso_utc(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts.strip().replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def apply_quiz_item_result(
+    item_id: int,
+    correct: bool,
+    *,
+    now_dt: datetime | None = None,
+) -> dict | None:
+    """Update trouble item score and multi-stage cool-down spacing after a quiz answer."""
+    cur_dt = (now_dt or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    now = cur_dt.isoformat()
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM trouble_items WHERE id = ?", (item_id,)).fetchone()
         if row is None:
             return None
         cur_score = float(row["trouble_score"] or 0.0)
+        cur_stage = int(row["memory_stage"] or 0)
+        next_due_dt = _parse_iso_utc(row["next_review_after"])
+        cooled_down = next_due_dt is None or cur_dt >= next_due_dt
+
         if correct:
-            new_score = max(0.0, cur_score - 2.0)
-            new_retired = 1 if new_score <= 0.5 else 0
+            new_score = max(0.0, cur_score - 1.5)
+            new_retired = 0
+            new_next_review: str | None = row["next_review_after"]
+
+            if cur_stage <= 0:
+                new_stage = 1
+                new_next_review = (cur_dt + timedelta(hours=20)).isoformat()
+            elif cur_stage == 1:
+                if cooled_down:
+                    new_stage = 2
+                    new_next_review = (cur_dt + timedelta(hours=72)).isoformat()
+                else:
+                    new_stage = 1
+                    new_next_review = (cur_dt + timedelta(hours=20)).isoformat()
+            else:
+                if cooled_down:
+                    new_stage = 3
+                    new_next_review = None
+                    new_score = 0.0
+                    new_retired = 1
+                else:
+                    new_stage = cur_stage
+
             conn.execute(
                 """
                 UPDATE trouble_items
                 SET correct_count = correct_count + 1,
                     trouble_score = ?,
+                    memory_stage = ?,
+                    next_review_after = ?,
                     retired = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (new_score, new_retired, now, item_id),
+                (new_score, new_stage, new_next_review, new_retired, now, item_id),
             )
         else:
             new_score = cur_score + 0.5
@@ -337,6 +393,8 @@ def apply_quiz_item_result(item_id: int, correct: bool) -> dict | None:
                 UPDATE trouble_items
                 SET wrong_count = wrong_count + 1,
                     trouble_score = ?,
+                    memory_stage = 0,
+                    next_review_after = NULL,
                     retired = 0,
                     updated_at = ?
                 WHERE id = ?

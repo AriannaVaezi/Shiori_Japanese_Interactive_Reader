@@ -2,7 +2,11 @@
 
 export const state = {
   settings: {
-    llm_provider: "ollama",
+    llm_provider: "llamacpp",
+    llamacpp_url: "http://127.0.0.1:8080",
+    llamacpp_model: "",
+    has_llamacpp_key: false,
+    llamacpp_api_key_masked: "",
     ollama_url: "http://localhost:11434",
     ollama_model: "",
     gemini_model: "gemini-2.5-flash",

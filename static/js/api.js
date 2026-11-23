@@ -72,6 +72,10 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  getLlamaCppModels(url = "") {
+    const qs = url ? `?url=${encodeURIComponent(url)}` : "";
+    return request(`/api/llm/llamacpp-models${qs}`);
+  },
   getOllamaModels(url = "") {
     const qs = url ? `?url=${encodeURIComponent(url)}` : "";
     return request(`/api/llm/ollama-models${qs}`);
@@ -103,6 +107,12 @@ export const api = {
   },
   submitQuiz(payload) {
     return request("/api/quiz/submit", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  evaluateOutput(payload) {
+    return request("/api/quiz/evaluate-output", {
       method: "POST",
       body: JSON.stringify(payload),
     });

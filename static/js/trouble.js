@@ -24,6 +24,18 @@ function setTab(tab) {
   tabHistory.classList.toggle("active", tab === "history");
 }
 
+function formatMemoryStage(item) {
+  if (item.retired || (item.memory_stage || 0) >= 3) return "Mastered";
+  const stage = item.memory_stage || 0;
+  if (stage === 0) return "New";
+  if (!item.next_review_after) return `Stage ${stage} · Ready`;
+  const diffMs = new Date(item.next_review_after).getTime() - Date.now();
+  if (diffMs <= 0) return `Stage ${stage} · Ready`;
+  const hrs = Math.ceil(diffMs / 3600000);
+  const wait = hrs >= 48 ? `${Math.ceil(hrs / 24)}d` : `${hrs}h`;
+  return `Stage ${stage} · next in ${wait}`;
+}
+
 export async function refreshTroubleBadge() {
   const bookId = state.currentBook?.id ?? null;
   try {
@@ -113,6 +125,7 @@ async function renderCurrentTab() {
       meta.className = "trouble-meta";
       const parts = [
         item.item_type === "grammar" ? "Grammar" : "Vocab",
+        formatMemoryStage(item),
         `Score: ${Number(item.trouble_score || 0).toFixed(1)}`,
       ];
       if (item.jj_views) parts.push(`J-J: ${item.jj_views}`);

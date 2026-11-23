@@ -1,4 +1,4 @@
-/** Settings modal for switching between local Ollama and Gemini API. */
+/** Settings modal for switching between llama.cpp, Ollama, and Gemini API. */
 
 import { api } from "./api.js";
 import { state } from "./state.js";
@@ -9,8 +9,17 @@ const btnClose = document.getElementById("btn-close-settings");
 const btnCancel = document.getElementById("btn-cancel-settings");
 const btnSave = document.getElementById("btn-save-settings");
 
+const llamacppFields = document.getElementById("settings-llamacpp-fields");
 const ollamaFields = document.getElementById("settings-ollama-fields");
 const geminiFields = document.getElementById("settings-gemini-fields");
+
+const inputLlamaUrl = document.getElementById("input-llamacpp-url");
+const btnRefreshLlama = document.getElementById("btn-refresh-llamacpp");
+const selectLlamaModel = document.getElementById("select-llamacpp-model");
+const llamacppHint = document.getElementById("llamacpp-model-hint");
+const inputLlamaKey = document.getElementById("input-llamacpp-key");
+const btnClearLlamaKey = document.getElementById("btn-clear-llamacpp-key");
+const llamacppKeyHint = document.getElementById("llamacpp-key-hint");
 
 const inputOllamaUrl = document.getElementById("input-ollama-url");
 const btnRefreshOllama = document.getElementById("btn-refresh-ollama");
@@ -26,59 +35,86 @@ const btnTest = document.getElementById("btn-test-llm");
 const testResult = document.getElementById("llm-test-result");
 
 let clearGeminiFlag = false;
+let clearLlamaKeyFlag = false;
 
 function getSelectedProvider() {
   const checked = form.querySelector('input[name="llm_provider"]:checked');
-  return checked ? checked.value : "ollama";
+  return checked ? checked.value : "llamacpp";
 }
 
 function setSelectedProvider(provider) {
-  const target = provider === "gemini" ? "gemini" : "ollama";
+  const target = ["llamacpp", "ollama", "gemini"].includes(provider) ? provider : "llamacpp";
   form.querySelectorAll('input[name="llm_provider"]').forEach((r) => {
     r.checked = r.value === target;
   });
+  llamacppFields.hidden = target !== "llamacpp";
   ollamaFields.hidden = target !== "ollama";
   geminiFields.hidden = target !== "gemini";
 }
 
-async function refreshOllamaModels(url, selectedModel) {
-  selectOllamaModel.replaceChildren();
+function populateSelect(selectEl, models, suggested, selectedModel, autoLabel) {
+  selectEl.replaceChildren();
   const autoOpt = document.createElement("option");
   autoOpt.value = "";
-  autoOpt.textContent = "Auto-detect best local model";
-  selectOllamaModel.appendChild(autoOpt);
+  autoOpt.textContent = autoLabel;
+  selectEl.appendChild(autoOpt);
 
+  for (const m of models || []) {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.textContent = m === suggested ? `${m} (suggested)` : m;
+    selectEl.appendChild(opt);
+  }
+
+  if (selectedModel) {
+    if (![...selectEl.options].some((o) => o.value === selectedModel)) {
+      const opt = document.createElement("option");
+      opt.value = selectedModel;
+      opt.textContent = `${selectedModel} (saved)`;
+      selectEl.appendChild(opt);
+    }
+    selectEl.value = selectedModel;
+  }
+}
+
+async function refreshLlamaCppModels(url, selectedModel) {
+  populateSelect(selectLlamaModel, [], null, selectedModel, "Auto / server default");
+  try {
+    const res = await api.getLlamaCppModels(url);
+    if (!res.reachable) {
+      llamacppHint.textContent = `llama.cpp not reachable at ${res.url}. Run: llama-server -hf Qwen/Qwen3-8B-GGUF:Q4_K_M --port 8080 -ngl 99`;
+      return;
+    }
+    populateSelect(
+      selectLlamaModel,
+      res.models,
+      res.suggested,
+      selectedModel,
+      "Auto / server default"
+    );
+    llamacppHint.textContent = res.models?.length
+      ? `Connected: ${res.models.length} model(s) loaded (${res.models[0]}).`
+      : "Server reachable (using loaded default model).";
+  } catch (err) {
+    llamacppHint.textContent = `Could not reach llama.cpp: ${err.message}`;
+  }
+}
+
+async function refreshOllamaModels(url, selectedModel) {
+  populateSelect(selectOllamaModel, [], null, selectedModel, "Auto-detect best local model");
   try {
     const res = await api.getOllamaModels(url);
     if (!res.reachable) {
-      ollamaHint.textContent = `Ollama not reachable at ${res.url}. Start Ollama or switch to Gemini API.`;
-      if (selectedModel) {
-        const opt = document.createElement("option");
-        opt.value = selectedModel;
-        opt.textContent = `${selectedModel} (saved)`;
-        selectOllamaModel.appendChild(opt);
-        selectOllamaModel.value = selectedModel;
-      }
+      ollamaHint.textContent = `Ollama not reachable at ${res.url}. Start Ollama or switch to llama.cpp / Gemini API.`;
       return;
     }
-
-    for (const m of res.models || []) {
-      const opt = document.createElement("option");
-      opt.value = m;
-      opt.textContent = m === res.suggested ? `${m} (suggested)` : m;
-      selectOllamaModel.appendChild(opt);
-    }
-
-    if (selectedModel) {
-      if (![...selectOllamaModel.options].some((o) => o.value === selectedModel)) {
-        const opt = document.createElement("option");
-        opt.value = selectedModel;
-        opt.textContent = `${selectedModel} (saved)`;
-        selectOllamaModel.appendChild(opt);
-      }
-      selectOllamaModel.value = selectedModel;
-    }
-
+    populateSelect(
+      selectOllamaModel,
+      res.models,
+      res.suggested,
+      selectedModel,
+      "Auto-detect best local model"
+    );
     ollamaHint.textContent = res.models?.length
       ? `${res.models.length} local model(s) detected.`
       : "Ollama is running, but no models are installed yet. Run e.g. `ollama pull qwen3:8b`.";
@@ -89,6 +125,7 @@ async function refreshOllamaModels(url, selectedModel) {
 
 export async function openSettingsModal() {
   clearGeminiFlag = false;
+  clearLlamaKeyFlag = false;
   testResult.textContent = "";
   testResult.className = "test-result";
 
@@ -101,6 +138,17 @@ export async function openSettingsModal() {
 
   const s = state.settings;
   setSelectedProvider(s.llm_provider);
+
+  inputLlamaUrl.value = s.llamacpp_url || "http://127.0.0.1:8080";
+  inputLlamaKey.value = "";
+  if (s.has_llamacpp_key) {
+    llamacppKeyHint.textContent = `Saved token: ${s.llamacpp_api_key_masked} (leave blank to keep)`;
+    btnClearLlamaKey.hidden = false;
+  } else {
+    llamacppKeyHint.textContent = "Leave blank unless your llama-server uses --api-key.";
+    btnClearLlamaKey.hidden = true;
+  }
+
   inputOllamaUrl.value = s.ollama_url || "http://localhost:11434";
   inputGeminiKey.value = "";
   selectGeminiModel.value = s.gemini_model || "gemini-2.5-flash";
@@ -114,7 +162,11 @@ export async function openSettingsModal() {
   }
 
   modal.hidden = false;
-  await refreshOllamaModels(inputOllamaUrl.value, s.ollama_model || "");
+  if (s.llm_provider === "ollama") {
+    await refreshOllamaModels(inputOllamaUrl.value, s.ollama_model || "");
+  } else if (s.llm_provider === "llamacpp") {
+    await refreshLlamaCppModels(inputLlamaUrl.value, s.llamacpp_model || "");
+  }
 }
 
 export function closeSettingsModal() {
@@ -123,7 +175,26 @@ export function closeSettingsModal() {
 
 export function initSettings() {
   form.querySelectorAll('input[name="llm_provider"]').forEach((radio) => {
-    radio.addEventListener("change", () => setSelectedProvider(getSelectedProvider()));
+    radio.addEventListener("change", () => {
+      const p = getSelectedProvider();
+      setSelectedProvider(p);
+      if (p === "llamacpp") {
+        refreshLlamaCppModels(inputLlamaUrl.value.trim(), selectLlamaModel.value);
+      } else if (p === "ollama") {
+        refreshOllamaModels(inputOllamaUrl.value.trim(), selectOllamaModel.value);
+      }
+    });
+  });
+
+  btnRefreshLlama.addEventListener("click", () => {
+    refreshLlamaCppModels(inputLlamaUrl.value.trim(), selectLlamaModel.value);
+  });
+
+  btnClearLlamaKey.addEventListener("click", () => {
+    clearLlamaKeyFlag = true;
+    inputLlamaKey.value = "";
+    btnClearLlamaKey.hidden = true;
+    llamacppKeyHint.textContent = "Token will be cleared on Save.";
   });
 
   btnRefreshOllama.addEventListener("click", () => {
@@ -144,10 +215,15 @@ export function initSettings() {
     try {
       const payload = {
         llm_provider: getSelectedProvider(),
+        llamacpp_url: inputLlamaUrl.value.trim(),
+        llamacpp_model: selectLlamaModel.value,
         ollama_url: inputOllamaUrl.value.trim(),
         ollama_model: selectOllamaModel.value,
         gemini_model: selectGeminiModel.value,
       };
+      if (inputLlamaKey.value.trim()) {
+        payload.llamacpp_api_key = inputLlamaKey.value.trim();
+      }
       if (inputGeminiKey.value.trim()) {
         payload.gemini_api_key = inputGeminiKey.value.trim();
       }
@@ -173,11 +249,17 @@ export function initSettings() {
     try {
       const payload = {
         llm_provider: getSelectedProvider(),
+        llamacpp_url: inputLlamaUrl.value.trim() || "http://127.0.0.1:8080",
+        llamacpp_model: selectLlamaModel.value,
+        clear_llamacpp_key: clearLlamaKeyFlag,
         ollama_url: inputOllamaUrl.value.trim() || "http://localhost:11434",
         ollama_model: selectOllamaModel.value,
         gemini_model: selectGeminiModel.value,
         clear_gemini_key: clearGeminiFlag,
       };
+      if (inputLlamaKey.value.trim()) {
+        payload.llamacpp_api_key = inputLlamaKey.value.trim();
+      }
       if (inputGeminiKey.value.trim()) {
         payload.gemini_api_key = inputGeminiKey.value.trim();
       }

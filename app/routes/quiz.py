@@ -26,6 +26,7 @@ class QuizResultItem(BaseModel):
     trouble_item_id: int | None = None
     trouble_item_ids: list[int] = []
     correct: bool
+    skipped: bool = False
 
 
 class QuizSubmitRequest(BaseModel):
@@ -33,6 +34,14 @@ class QuizSubmitRequest(BaseModel):
     chapter_index: int | None = None
     trigger_type: str = "chapter"
     results: list[QuizResultItem]
+
+
+class OutputEvalRequest(BaseModel):
+    target_word: str
+    reading: str = ""
+    item_type: str = "word"
+    user_sentence: str
+    meaning_hint: str = ""
 
 
 @router.post("/generate")
@@ -55,6 +64,18 @@ def submit_quiz(req: QuizSubmitRequest):
         chapter_index=req.chapter_index,
         trigger_type=req.trigger_type,
         results=[r.model_dump() for r in req.results],
+    )
+
+
+@router.post("/evaluate-output")
+async def evaluate_output(req: OutputEvalRequest):
+    """Evaluate a learner-written Japanese sentence for the 1-sentence output quiz prompt."""
+    return await quiz_service.evaluate_output_sentence(
+        target_word=req.target_word,
+        reading=req.reading,
+        item_type=req.item_type,
+        user_sentence=req.user_sentence,
+        meaning_hint=req.meaning_hint,
     )
 
 

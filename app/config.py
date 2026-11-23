@@ -14,7 +14,10 @@ STATIC_DIR = ROOT_DIR / "static"
 BOOK_ID_PLACEHOLDER = "__BOOK_ID__"
 
 DEFAULT_SETTINGS: dict[str, str] = {
-    "llm_provider": "ollama",
+    "llm_provider": "llamacpp",
+    "llamacpp_url": "http://127.0.0.1:8080",
+    "llamacpp_model": "",
+    "llamacpp_api_key": "",
     "ollama_url": "http://localhost:11434",
     "ollama_model": "",
     "gemini_api_key": "",

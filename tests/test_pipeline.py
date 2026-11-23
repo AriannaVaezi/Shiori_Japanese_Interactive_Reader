@@ -6,9 +6,11 @@ import base64
 import json
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
@@ -513,11 +515,15 @@ def test_quiz_and_trouble_lifecycle(temp_env, monkeypatch: pytest.MonkeyPatch):
 
         kinds = [q["kind"] for q in questions]
         assert "scramble" in kinds
+        assert "sentence_output" in kinds
         assert kinds.count("cloze") <= 1
         non_cloze_vocab = [
-            q for q in questions if q["kind"] in {"reading_recall", "meaning_match", "def_to_word", "match_pairs"}
+            q
+            for q in questions
+            if q["kind"]
+            in {"typed_reading", "reading_recall", "meaning_match", "def_to_word", "match_pairs"}
         ]
-        assert len(non_cloze_vocab) >= 2
+        assert len(non_cloze_vocab) >= 1
 
         for q in questions:
             if q["kind"] == "scramble":
@@ -533,12 +539,19 @@ def test_quiz_and_trouble_lifecycle(temp_env, monkeypatch: pytest.MonkeyPatch):
                 assert "＿＿" in q["blanked_sentence"]
                 assert len(q["choices"]) == 4
                 assert q["correct_answer"] in q["choices"]
+            elif q["kind"] == "sentence_output":
+                assert q["prompt_word"]
+                assert q["prompt_text"]
             else:
-                assert q["kind"] in {"reading_recall", "meaning_match", "def_to_word"}
-                assert len(q["choices"]) == 4
-                assert q["correct_answer"] in q["choices"]
+                assert q["kind"] in {"typed_reading", "reading_recall", "meaning_match", "def_to_word"}
+                if q["kind"] == "typed_reading":
+                    assert q["prompt_word"]
+                    assert q["correct_answer"]
+                else:
+                    assert len(q["choices"]) == 4
+                    assert q["correct_answer"] in q["choices"]
 
-        # Submit quiz with all answers correct -> lowers scores & retires low-score word
+        # Submit quiz with all answers correct -> advances Stage 0 -> Stage 1 (cool-down, NOT prematurely retired)
         submit_results = [
             {
                 "question_id": q["question_id"],
@@ -560,24 +573,40 @@ def test_quiz_and_trouble_lifecycle(temp_env, monkeypatch: pytest.MonkeyPatch):
         ).json()
         assert sub_res["score"] == 5
         assert sub_res["total"] == 5
-        assert any(c["display_text"] == "透き通る" and c["retired"] for c in sub_res["conquered"])
+        word_stage1 = next(c for c in sub_res["conquered"] if c["display_text"] == "透き通る")
+        assert word_stage1["memory_stage"] == 1
+        assert word_stage1["retired"] is False
+        assert word_stage1["next_review_after"] is not None
 
-        # Retired item disappears from default active /api/trouble, remains under include_retired=true
-        active_after = client.get(f"/api/trouble?book_id={book1['id']}").json()["items"]
-        assert all(i["item_key"] != "透き通る|すきとおる" for i in active_after)
+        # Multi-stage spacing over real time: Stage 1 (+21h) -> Stage 2 (+73h) -> Stage 3 (retired)
+        t_base = datetime.now(timezone.utc)
+        s2 = db.apply_quiz_item_result(word_stage1["id"], True, now_dt=t_base + timedelta(hours=21))
+        assert s2["memory_stage"] == 2
+        assert s2["retired"] == 0
 
-        all_after = client.get(
-            f"/api/trouble?book_id={book1['id']}&include_retired=true"
-        ).json()["items"]
-        retired_word = next(i for i in all_after if i["item_key"] == "透き通る|すきとおる")
-        assert retired_word["retired"] == 1
+        s3 = db.apply_quiz_item_result(word_stage1["id"], True, now_dt=t_base + timedelta(hours=95))
+        assert s3["memory_stage"] == 3
+        assert s3["retired"] == 1
+
+        # Wrong answer resets back to Stage 0
+        reset = db.apply_quiz_item_result(word_stage1["id"], False, now_dt=t_base + timedelta(hours=96))
+        assert reset["memory_stage"] == 0
+        assert reset["retired"] == 0
 
         # Manual retire / restore toggle
+        retired = client.post(
+            f"/api/trouble/{word_stage1['id']}/retire",
+            json={"retired": True},
+        ).json()["item"]
+        assert retired["retired"] == 1
+        assert retired["memory_stage"] == 3
+
         restored = client.post(
-            f"/api/trouble/{retired_word['id']}/retire",
+            f"/api/trouble/{word_stage1['id']}/retire",
             json={"retired": False},
         ).json()["item"]
         assert restored["retired"] == 0
+        assert restored["memory_stage"] == 0
 
         # Quiz history persisted
         hist = client.get(f"/api/quiz/history?book_id={book1['id']}").json()["sessions"]
@@ -842,4 +871,205 @@ def test_non_cloze_vocab_question_builders(temp_env):
     )
     assert sub["score"] == 1
     assert len(sub["conquered"]) == 2
-    assert all(c["retired"] for c in sub["conquered"])
+    assert all(c["memory_stage"] == 1 and not c["retired"] for c in sub["conquered"])
+
+
+def test_llamacpp_provider_and_settings(temp_env, monkeypatch: pytest.MonkeyPatch):
+    captured_requests = []
+
+    class FakeResponse:
+        def __init__(self, status_code: int, body: dict):
+            self.status_code = status_code
+            self._body = body
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError("err", request=None, response=None)
+
+        def json(self):
+            return self._body
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None):
+            captured_requests.append(("GET", url, headers))
+            return FakeResponse(200, {"data": [{"id": "Qwen3-8B-Q4_K_M.gguf"}]})
+
+        async def post(self, url, json=None, headers=None):
+            captured_requests.append(("POST", url, json, headers))
+            return FakeResponse(
+                200,
+                {
+                    "model": "Qwen3-8B-Q4_K_M.gguf",
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '<think>reasoning</think>\n{"simple_definition": "静かで落ち着いていること。", "part_of_speech": "形容動詞", "context_note": "朝の雰囲気を表します。", "examples": [{"jp": "森は静かだ。", "reading": "もり・しずか"}]}'
+                            }
+                        }
+                    ],
+                },
+            )
+
+    monkeypatch.setattr(llm.httpx, "AsyncClient", FakeAsyncClient)
+
+    with TestClient(app) as client:
+        # Update settings to llama.cpp with bearer token and verify secret masking
+        s_put = client.put(
+            "/api/settings",
+            json={
+                "llm_provider": "llamacpp",
+                "llamacpp_url": "http://127.0.0.1:8080",
+                "llamacpp_api_key": "local-secret-token-9999",
+            },
+        )
+        assert s_put.status_code == 200
+        s_json = s_put.json()
+        assert s_json["llm_provider"] == "llamacpp"
+        assert s_json["has_llamacpp_key"] is True
+        assert "local-secret-token-9999" not in json.dumps(s_json)
+        assert "9999" in s_json["llamacpp_api_key_masked"]
+
+        models_res = client.get("/api/llm/llamacpp-models").json()
+        assert models_res["reachable"] is True
+        assert models_res["models"] == ["Qwen3-8B-Q4_K_M.gguf"]
+
+        jj = client.post(
+            "/api/lookup/jj",
+            json={
+                "lemma": "静か",
+                "reading": "しずか",
+                "surface": "静か",
+                "sentence_text": "田舎の静かな朝。",
+            },
+        ).json()
+        assert jj["llm_unavailable"] is False
+        assert jj["provider"] == "llamacpp"
+        assert jj["model"] == "Qwen3-8B-Q4_K_M.gguf"
+        assert jj["jj"]["simple_definition"] == "静かで落ち着いていること。"
+
+        post_call = next(r for r in captured_requests if r[0] == "POST")
+        assert post_call[1] == "http://127.0.0.1:8080/v1/chat/completions"
+        assert post_call[2]["response_format"] == {"type": "json_object"}
+        assert post_call[3]["Authorization"] == "Bearer local-secret-token-9999"
+
+
+def test_long_term_quiz_mixing_and_output_eval(temp_env, monkeypatch: pytest.MonkeyPatch):
+    with TestClient(app) as client:
+        books = client.get("/api/books").json()["books"]
+        book1 = books[0]
+        ch1_idx = next(c["chapter_index"] for c in book1["chapters"] if c["title"] == "１")
+        client.get(f"/api/books/{book1['id']}/chapters/{ch1_idx}")
+
+        past_due = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        future_cool = (datetime.now(timezone.utc) + timedelta(hours=18)).isoformat()
+
+        with db.get_conn() as conn:
+            # 1) Ready aged item (Stage 1, past due) -> MUST appear in quiz with is_aged=True
+            conn.execute(
+                """
+                INSERT INTO trouble_items
+                    (item_type, item_key, display_text, reading, book_id, last_chapter_index,
+                     sent_text, trouble_score, memory_stage, next_review_after, retired, updated_at)
+                VALUES ('word', '商店街|しょうてんがい', '商店街', 'しょうてんがい', ?, ?,
+                        '駅前にはお店が立ち並ぶ商店街がある。', 2.0, 1, ?, 0, '2026-11-20T00:00:00+00:00')
+                """,
+                (book1["id"], ch1_idx, past_due),
+            )
+            # 2) Cooling-down item (Stage 1, due in future) -> MUST NOT appear in quiz
+            conn.execute(
+                """
+                INSERT INTO trouble_items
+                    (item_type, item_key, display_text, reading, book_id, last_chapter_index,
+                     sent_text, trouble_score, memory_stage, next_review_after, retired, updated_at)
+                VALUES ('word', '小鳥|ことり', '小鳥', 'ことり', ?, ?,
+                        '田舎の朝には、いつも小鳥の声が聞こえる。', 5.0, 1, ?, 0, '2026-11-22T00:00:00+00:00')
+                """,
+                (book1["id"], ch1_idx, future_cool),
+            )
+
+        quiz = client.post(
+            "/api/quiz/generate",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "trigger_type": "chapter",
+                "max_questions": 5,
+            },
+        ).json()
+        qs = quiz["questions"]
+        assert len(qs) == 5
+        assert quiz["aged_count"] >= 1
+        assert qs[0]["target_display"] == "商店街"
+        assert qs[0]["is_aged"] is True
+        assert qs[0]["kind"] == "typed_reading"
+        assert all(q["target_display"] != "小鳥" for q in qs)
+        assert qs[-1]["kind"] == "sentence_output"
+
+        # Test skipped output doesn't affect score
+        skip_sub = client.post(
+            "/api/quiz/submit",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "trigger_type": "chapter",
+                "results": [
+                    {"question_id": "q_0", "kind": "typed_reading", "trouble_item_id": None, "correct": True},
+                    {"question_id": "q_4", "kind": "sentence_output", "trouble_item_id": None, "correct": True, "skipped": True},
+                ],
+            },
+        ).json()
+        assert skip_sub["score"] == 1
+        assert skip_sub["total"] == 1
+
+        # Output evaluation with mocked LLM
+        async def fake_eval(**kwargs):
+            return (
+                json.dumps(
+                    {
+                        "passed": True,
+                        "verdict": "Great use of 商店街!",
+                        "grammar_tip": "Particles で and に are natural here.",
+                        "natural_version": "駅前の商店街でパンを買った。",
+                    },
+                    ensure_ascii=False,
+                ),
+                "llamacpp",
+                "Qwen3-8B",
+            )
+
+        monkeypatch.setattr(llm, "generate_text", fake_eval)
+        ev_ok = client.post(
+            "/api/quiz/evaluate-output",
+            json={
+                "target_word": "商店街",
+                "reading": "しょうてんがい",
+                "user_sentence": "商店街で買い物をした。",
+            },
+        ).json()
+        assert ev_ok["llm_unavailable"] is False
+        assert ev_ok["passed"] is True
+        assert ev_ok["natural_version"]
+
+        # Graceful offline fallback when LLM is unreachable
+        monkeypatch.setattr(
+            llm,
+            "generate_text",
+            AsyncMock(side_effect=llm.LLMUnavailableError("Server offline")),
+        )
+        ev_down = client.post(
+            "/api/quiz/evaluate-output",
+            json={
+                "target_word": "商店街",
+                "user_sentence": "商店街に行く。",
+            },
+        ).json()
+        assert ev_down["llm_unavailable"] is True

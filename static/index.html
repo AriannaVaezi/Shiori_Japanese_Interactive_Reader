@@ -204,20 +204,53 @@
 
       <form id="settings-form" class="modal-body">
         <div class="field-group">
-          <label class="field-label">AI Provider (for Easy Japanese Lookup &amp; Grammar Q&amp;A)</label>
+          <label class="field-label">AI Provider (for Easy Japanese Lookup, Grammar Q&amp;A &amp; Quiz Coaching)</label>
           <div class="segmented">
             <label class="seg-option">
+              <input type="radio" name="llm_provider" value="llamacpp" />
+              <span>llama.cpp (Local)</span>
+            </label>
+            <label class="seg-option">
               <input type="radio" name="llm_provider" value="ollama" />
-              <span>Ollama (Local &amp; Free)</span>
+              <span>Ollama (Local)</span>
             </label>
             <label class="seg-option">
               <input type="radio" name="llm_provider" value="gemini" />
-              <span>Gemini API (AI Studio)</span>
+              <span>Gemini API</span>
             </label>
           </div>
         </div>
 
-        <div id="settings-ollama-fields" class="provider-panel">
+        <div id="settings-llamacpp-fields" class="provider-panel">
+          <div class="field-group">
+            <label class="field-label" for="input-llamacpp-url">llama.cpp Server URL (OpenAI-compatible)</label>
+            <div class="inline-row">
+              <input id="input-llamacpp-url" type="url" placeholder="http://127.0.0.1:8080" />
+              <button id="btn-refresh-llamacpp" class="btn btn-secondary" type="button">Detect Server</button>
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="select-llamacpp-model">Model (optional for single-model server)</label>
+            <select id="select-llamacpp-model">
+              <option value="">Auto / server default</option>
+            </select>
+            <p id="llamacpp-model-hint" class="field-hint">
+              Example: <code>llama-server -hf Qwen/Qwen3-8B-GGUF:Q4_K_M --port 8080 -ngl 99</code>
+            </p>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="input-llamacpp-key">API Key (optional)</label>
+            <div class="inline-row">
+              <input id="input-llamacpp-key" type="password" autocomplete="off" placeholder="Optional Bearer token" />
+              <button id="btn-clear-llamacpp-key" class="btn btn-secondary" type="button" hidden>Clear Key</button>
+            </div>
+            <p id="llamacpp-key-hint" class="field-hint"></p>
+          </div>
+        </div>
+
+        <div id="settings-ollama-fields" class="provider-panel" hidden>
           <div class="field-group">
             <label class="field-label" for="input-ollama-url">Ollama Base URL</label>
             <div class="inline-row">
@@ -310,12 +343,44 @@
 
         <div id="quiz-stage" hidden>
           <div class="quiz-stage-top">
-            <span id="quiz-kind-badge" class="pos-badge"></span>
+            <div class="quiz-badges">
+              <span id="quiz-kind-badge" class="pos-badge"></span>
+              <span id="quiz-aged-badge" class="aged-badge" hidden>Spaced Review</span>
+            </div>
             <button id="btn-quiz-hint" class="btn btn-link" type="button" hidden>Show Hint</button>
           </div>
           <div id="quiz-hint-box" class="jj-context" hidden></div>
           <div id="quiz-word-hero" class="quiz-word-hero" hidden></div>
           <p id="quiz-prompt-sentence" class="quiz-prompt-sentence"></p>
+
+          <!-- Typed Reading Recall (Romaji -> Hiragana) -->
+          <div id="quiz-typed" class="quiz-typed" hidden>
+            <div class="inline-row">
+              <input id="input-quiz-reading" type="text" autocomplete="off" placeholder="Type romaji (e.g. shoutengai) or ひらがな…" />
+              <button id="btn-typed-check" class="btn btn-primary" type="button">Check</button>
+            </div>
+            <div class="typed-subrow">
+              <span class="hint-text">Reading preview: <strong id="quiz-kana-preview">—</strong></span>
+              <button id="btn-typed-show-choices" class="btn btn-link" type="button" hidden>Show 4 Choices</button>
+            </div>
+          </div>
+
+          <!-- 1-Sentence Active Output Challenge -->
+          <div id="quiz-output" class="quiz-output" hidden>
+            <p id="quiz-output-meaning" class="hint-text"></p>
+            <textarea id="input-quiz-output" rows="2" placeholder="Write 1 short Japanese sentence using this word/pattern…"></textarea>
+            <div class="output-actions">
+              <button id="btn-output-skip" class="btn btn-ghost" type="button">Skip (Optional)</button>
+              <button id="btn-output-check" class="btn btn-primary" type="button">Check with AI</button>
+            </div>
+            <div id="quiz-output-selfcheck" class="output-selfcheck" hidden>
+              <span class="hint-text">AI unavailable — quick self-check:</span>
+              <div class="output-selfcheck-btns">
+                <button id="btn-output-self-pass" class="btn btn-secondary" type="button">Used it well ✓</button>
+                <button id="btn-output-self-retry" class="btn btn-ghost" type="button">Needs more practice</button>
+              </div>
+            </div>
+          </div>
 
           <!-- Cloze / Particle / Vocab choices -->
           <div id="quiz-choices" class="quiz-choices" hidden></div>
