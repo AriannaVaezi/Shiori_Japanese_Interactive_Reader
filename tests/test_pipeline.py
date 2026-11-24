@@ -22,7 +22,7 @@ from PIL import Image
 from app import config, db, dictionary, llamacpp_manager, llm
 from app.epub_parser import parse_epub, read_epub_asset
 from app.main import app
-from app.manga_parser import parse_manga
+from app.manga_parser import extract_manga_toc, parse_manga
 from app.services import books_service, grammar_service, lookup_service, manga_ocr_service, manga_service, quiz_service
 from app.tokenizer import (
     chunk_into_bunsetsu,
@@ -1855,6 +1855,8 @@ def test_natural_volume_ordering_and_versioned_static_assets(tmp_path: Path, mon
             idx = client.get("/")
             assert idx.status_code == 200
             assert "no-store" in idx.headers.get("cache-control", "")
+            assert 'id="manga-toc-select"' in idx.text
+            assert 'id="btn-manga-exit-fs"' not in idx.text
 
             js_match = re.search(r'src="(/static/v/([a-f0-9]+)/js/main\.js)"', idx.text)
             css_match = re.search(r'href="(/static/v/([a-f0-9]+)/css/app\.css)"', idx.text)
@@ -1873,11 +1875,126 @@ def test_natural_volume_ordering_and_versioned_static_assets(tmp_path: Path, mon
                 assert r.status_code == 200
                 assert expected_mime in r.headers.get("content-type", "")
                 assert "no-store" in r.headers.get("cache-control", "")
+                if asset_rel == "css/app.css":
+                    assert ".manga-spread-group" in r.text
 
             # Traversal outside STATIC_DIR must 404
             assert client.get(f"/static/v/{ver}/%2e%2e/pyproject.toml").status_code == 404
             assert client.get(f"/static/v/{ver}/../pyproject.toml").status_code == 404
     finally:
         db.set_db_path(None)
+
+
+def test_manga_toc_extraction_and_backfill(tmp_path: Path, monkeypatch):
+    """Verify EPUB NCX TOC mapping, CBZ subfolder TOC, and lazy toc_json backfill preserving OCR."""
+    books_dir = tmp_path / "books"
+    manga_dir = tmp_path / "manga"
+    books_dir.mkdir()
+    manga_dir.mkdir()
+
+    # Build a synthetic manga EPUB with toc.ncx (including Calibre-style unresolved entry 0)
+    epub_path = manga_dir / "toc_manga.epub"
+    container_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>"""
+    content_opf = """<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>目次テスト漫画 １</dc:title>
+    <dc:creator>テスト</dc:creator>
+  </metadata>
+  <manifest>
+    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    <item id="p0" href="text/p0.xhtml" media-type="application/xhtml+xml"/>
+    <item id="p1" href="text/p1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="p2" href="text/p2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img0" href="images/0.png" media-type="image/png"/>
+    <item id="img1" href="images/1.png" media-type="image/png"/>
+    <item id="img2" href="images/2.png" media-type="image/png"/>
+  </manifest>
+  <spine toc="ncx" page-progression-direction="rtl">
+    <itemref idref="p0"/>
+    <itemref idref="p1"/>
+    <itemref idref="p2"/>
+  </spine>
+</package>"""
+    toc_ncx = """<?xml version="1.0" encoding="utf-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap>
+    <navPoint id="n0" playOrder="1"><navLabel><text>表紙</text></navLabel><content src="missing_cover_alias.xhtml"/></navPoint>
+    <navPoint id="n1" playOrder="2"><navLabel><text>第1話</text></navLabel><content src="text/p1.xhtml"/></navPoint>
+    <navPoint id="n2" playOrder="3"><navLabel><text>第2話</text></navLabel><content src="text/p2.xhtml"/></navPoint>
+  </navMap>
+</ncx>"""
+    with zipfile.ZipFile(epub_path, "w") as zf:
+        zf.writestr("META-INF/container.xml", container_xml)
+        zf.writestr("OEBPS/content.opf", content_opf)
+        zf.writestr("OEBPS/toc.ncx", toc_ncx)
+        for i in range(3):
+            zf.writestr(
+                f"OEBPS/text/p{i}.xhtml",
+                f'<html><body><div><img src="../images/{i}.png"/></div></body></html>',
+            )
+            zf.writestr(f"OEBPS/images/{i}.png", _make_solid_png_bytes(800, 1200))
+
+    # Build a multi-folder CBZ archive
+    cbz_path = manga_dir / "cbz_chapters.cbz"
+    with zipfile.ZipFile(cbz_path, "w") as zf:
+        zf.writestr("Ch01/001.png", _make_solid_png_bytes(800, 1200))
+        zf.writestr("Ch01/002.png", _make_solid_png_bytes(800, 1200))
+        zf.writestr("Ch02/001.png", _make_solid_png_bytes(800, 1200))
+
+    assert extract_manga_toc(epub_path) == [
+        {"title": "表紙", "page_index": 0},
+        {"title": "第1話", "page_index": 1},
+        {"title": "第2話", "page_index": 2},
+    ]
+    assert extract_manga_toc(cbz_path) == [
+        {"title": "Ch01", "page_index": 0},
+        {"title": "Ch02", "page_index": 2},
+    ]
+
+    test_db = tmp_path / "test_toc.db"
+    monkeypatch.setattr(config, "BOOKS_DIR", books_dir)
+    monkeypatch.setattr(config, "MANGA_DIR", manga_dir)
+    monkeypatch.setattr(config, "DB_PATH", test_db)
+    db.set_db_path(test_db)
+    db.init_db()
+
+    try:
+        manga_service.scan_manga_folder()
+        items = manga_service.list_manga()
+        epub_id = next(m["id"] for m in items if m["title"] == "目次テスト漫画 １")
+
+        # Simulate pre-upgrade row with cached OCR and NULL toc_json
+        sentinel_ocr = json.dumps({"ocr_available": True, "blocks": []}, ensure_ascii=False)
+        with db.get_conn() as conn:
+            conn.execute("UPDATE books SET toc_json = NULL WHERE id = ?", (epub_id,))
+            conn.execute(
+                "UPDATE manga_pages SET ocr_json = ? WHERE book_id = ? AND page_index = 1",
+                (sentinel_ocr, epub_id),
+            )
+
+        with TestClient(app) as client:
+            detail = client.get(f"/api/manga/{epub_id}").json()
+            assert detail["toc"] == [
+                {"title": "表紙", "page_index": 0},
+                {"title": "第1話", "page_index": 1},
+                {"title": "第2話", "page_index": 2},
+            ]
+
+        # Backfill must preserve existing OCR cache and populate books.toc_json
+        with db.get_conn() as conn:
+            book_row = conn.execute("SELECT toc_json FROM books WHERE id = ?", (epub_id,)).fetchone()
+            page_row = conn.execute(
+                "SELECT ocr_json FROM manga_pages WHERE book_id = ? AND page_index = 1",
+                (epub_id,),
+            ).fetchone()
+        assert book_row["toc_json"] is not None
+        assert page_row["ocr_json"] == sentinel_ocr
+    finally:
+        db.set_db_path(None)
+
 
 

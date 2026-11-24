@@ -70,6 +70,7 @@ def init_db() -> None:
                 cover_href TEXT,
                 chapter_count INTEGER DEFAULT 0,
                 media_type TEXT NOT NULL DEFAULT 'novel',
+                toc_json TEXT,
                 added_at TEXT NOT NULL
             );
 
@@ -213,6 +214,8 @@ def init_db() -> None:
         }
         if "media_type" not in book_cols:
             conn.execute("ALTER TABLE books ADD COLUMN media_type TEXT NOT NULL DEFAULT 'novel'")
+        if "toc_json" not in book_cols:
+            conn.execute("ALTER TABLE books ADD COLUMN toc_json TEXT")
 
         for key, default_val in config.DEFAULT_SETTINGS.items():
             conn.execute(

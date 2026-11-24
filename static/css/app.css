@@ -1801,6 +1801,10 @@ html[data-theme="dark"] .aged-badge {
   text-align: center;
 }
 
+.manga-toc-select {
+  max-width: 190px;
+}
+
 .manga-workspace {
   flex: 1 1 auto;
   min-height: 0;
@@ -1835,6 +1839,15 @@ html[data-theme="dark"] .aged-badge {
   padding: 10px 12px;
 }
 
+.manga-spread-group {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+}
+
 .manga-stage.mode-vertical {
   flex-direction: column;
   align-items: center;
@@ -1851,6 +1864,15 @@ html[data-theme="dark"] .aged-badge {
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.manga-stage.mode-spread .manga-page-frame {
+  box-shadow: none;
+  background: transparent;
+}
+
+.manga-stage.mode-spread .manga-page-frame + .manga-page-frame {
+  margin-left: -1px;
 }
 
 .manga-page-img {
@@ -2000,30 +2022,6 @@ html[data-theme="dark"] .aged-badge {
 /* Manga Fullscreen Mode (on <html> so popovers, drawers & modals remain visible on top) */
 .manga-fs-hover-zone {
   display: none;
-}
-
-.manga-fs-exit-btn {
-  position: fixed;
-  top: 12px;
-  right: 14px;
-  z-index: 28;
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(16, 18, 24, 0.72);
-  color: #f1f3f6;
-  border-radius: 999px;
-  padding: 5px 12px;
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  opacity: 0.35;
-  transition: opacity 0.16s ease, background 0.16s ease;
-  backdrop-filter: blur(6px);
-}
-
-.manga-fs-exit-btn:hover {
-  opacity: 1;
-  background: rgba(16, 18, 24, 0.94);
 }
 
 html.manga-fullscreen #manga-view {

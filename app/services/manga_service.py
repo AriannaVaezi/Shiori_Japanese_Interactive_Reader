@@ -9,7 +9,7 @@ from typing import Any
 
 from app import config, db
 from app.epub_parser import compute_file_hash
-from app.manga_parser import parse_manga, read_manga_asset
+from app.manga_parser import extract_manga_toc, parse_manga, read_manga_asset
 from app.services import books_service, manga_ocr_service
 
 _MANGA_EXTENSIONS = ("*.epub", "*.cbz")
@@ -45,7 +45,7 @@ def scan_manga_folder(manga_dir: Path | None = None) -> list[dict[str, Any]]:
 
     with db.get_conn() as conn:
         existing_rows = conn.execute(
-            "SELECT id, file_path, file_hash FROM books WHERE media_type = 'manga'"
+            "SELECT id, file_path, file_hash, toc_json FROM books WHERE media_type = 'manga'"
         ).fetchall()
         existing_by_path = {row["file_path"]: row for row in existing_rows}
 
@@ -61,11 +61,24 @@ def scan_manga_folder(manga_dir: Path | None = None) -> list[dict[str, Any]]:
         file_hash = compute_file_hash(archive_path)
         existing = existing_by_path.get(resolved)
         if existing and existing["file_hash"] == file_hash:
+            if existing["toc_json"] is None:
+                toc_json_backfill = json.dumps(
+                    extract_manga_toc(archive_path), ensure_ascii=False
+                )
+                with db.get_conn() as conn:
+                    conn.execute(
+                        "UPDATE books SET toc_json = ? WHERE id = ?",
+                        (toc_json_backfill, existing["id"]),
+                    )
             continue
 
         parsed = parse_manga(archive_path)
         now = db.utc_now_iso()
         cover_href = parsed.pages[0].image_href if parsed.pages else None
+        toc_json_str = json.dumps(
+            [{"title": entry.title, "page_index": entry.page_index} for entry in parsed.toc],
+            ensure_ascii=False,
+        )
 
         sidecar_by_basename: dict[str, dict[str, Any]] = {}
         for sp in parsed.sidecar_pages:
@@ -80,7 +93,7 @@ def scan_manga_folder(manga_dir: Path | None = None) -> list[dict[str, Any]]:
                     """
                     UPDATE books
                     SET file_hash = ?, title = ?, author = ?, cover_href = ?,
-                        chapter_count = ?, media_type = 'manga'
+                        chapter_count = ?, media_type = 'manga', toc_json = ?
                     WHERE id = ?
                     """,
                     (
@@ -89,6 +102,7 @@ def scan_manga_folder(manga_dir: Path | None = None) -> list[dict[str, Any]]:
                         parsed.author,
                         cover_href,
                         len(parsed.pages),
+                        toc_json_str,
                         book_id,
                     ),
                 )
@@ -97,8 +111,8 @@ def scan_manga_folder(manga_dir: Path | None = None) -> list[dict[str, Any]]:
                 cur = conn.execute(
                     """
                     INSERT INTO books
-                        (file_path, file_hash, title, author, cover_href, chapter_count, media_type, added_at)
-                    VALUES (?, ?, ?, ?, ?, ?, 'manga', ?)
+                        (file_path, file_hash, title, author, cover_href, chapter_count, media_type, toc_json, added_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'manga', ?, ?)
                     """,
                     (
                         parsed.file_path,
@@ -107,6 +121,7 @@ def scan_manga_folder(manga_dir: Path | None = None) -> list[dict[str, Any]]:
                         parsed.author,
                         cover_href,
                         len(parsed.pages),
+                        toc_json_str,
                         now,
                     ),
                 )
@@ -203,6 +218,21 @@ def get_manga_detail(book_id: int) -> dict[str, Any] | None:
         for p in page_rows
     ]
 
+    toc_list: list[dict[str, Any]]
+    if row["toc_json"] is None:
+        toc_list = extract_manga_toc(Path(row["file_path"]))
+        with db.get_conn() as conn:
+            conn.execute(
+                "UPDATE books SET toc_json = ? WHERE id = ?",
+                (json.dumps(toc_list, ensure_ascii=False), book_id),
+            )
+    else:
+        try:
+            parsed_toc = json.loads(row["toc_json"])
+            toc_list = parsed_toc if isinstance(parsed_toc, list) else []
+        except Exception:
+            toc_list = []
+
     return {
         "id": row["id"],
         "title": row["title"],
@@ -220,6 +250,7 @@ def get_manga_detail(book_id: int) -> dict[str, Any] | None:
             "reading_seconds": row["reading_seconds"] or 0,
             "updated_at": row["prog_updated_at"],
         },
+        "toc": toc_list,
         "pages": pages,
     }
 
