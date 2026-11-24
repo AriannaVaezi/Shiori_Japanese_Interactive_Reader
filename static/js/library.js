@@ -121,11 +121,20 @@ export function renderBooks(books) {
       prog.chapter_index > 0 || prog.scroll_ratio > 0.02
         ? "Continue Reading"
         : "Start Reading";
-    btnOpen.addEventListener("click", () => {
-      if (isManga) {
-        if (onOpenMangaCb) onOpenMangaCb(book.id, prog.chapter_index || 0);
-      } else if (onOpenBookCb) {
-        onOpenBookCb(book.id, prog.chapter_index || 0, prog.scroll_ratio || 0);
+    btnOpen.addEventListener("click", async () => {
+      btnOpen.disabled = true;
+      statusEl.hidden = true;
+      try {
+        if (isManga) {
+          if (onOpenMangaCb) await onOpenMangaCb(book.id, prog.chapter_index || 0);
+        } else if (onOpenBookCb) {
+          await onOpenBookCb(book.id, prog.chapter_index || 0, prog.scroll_ratio || 0);
+        }
+      } catch (err) {
+        statusEl.textContent = `Could not open "${book.title}": ${err.message}`;
+        statusEl.hidden = false;
+      } finally {
+        btnOpen.disabled = false;
       }
     });
     actions.appendChild(btnOpen);

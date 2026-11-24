@@ -128,6 +128,7 @@ async function bootstrap() {
     onBackToLibrary: () => showLibraryView(),
     onChapterQuiz: (triggerType) => launchQuiz(triggerType),
     onSaveNote: (ctx) => openNotesModal(ctx),
+    onOpenManga: (bookId, pageIdx) => openManga(bookId, pageIdx),
     onChapterOpened: () => {
       refreshTroubleBadge();
       refreshNotesBadge();

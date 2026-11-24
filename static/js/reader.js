@@ -42,6 +42,7 @@ let onBackLibraryCb = null;
 let onChapterQuizCb = null;
 let onSaveNoteCb = null;
 let onChapterOpenedCb = null;
+let onOpenMangaCb = null;
 let pendingSelection = null;
 let saveScrollTimer = null;
 let lastProgressSavedMs = Date.now();
@@ -195,7 +196,17 @@ export async function openChapter(bookId, chapterIndex, restoreScrollRatio = 0) 
   contentEl.innerHTML = '<p class="loading-line">Loading chapter…</p>';
   footerNav.hidden = true;
 
-  const chapter = await api.getChapter(bookId, chapterIndex);
+  let chapter;
+  try {
+    chapter = await api.getChapter(bookId, chapterIndex);
+  } catch (err) {
+    contentEl.replaceChildren();
+    const alert = document.createElement("div");
+    alert.className = "inline-alert";
+    alert.textContent = `Could not load chapter: ${err.message}`;
+    contentEl.appendChild(alert);
+    return;
+  }
   state.currentChapter = chapter;
   contentEl.innerHTML = chapter.html || "";
 
@@ -217,6 +228,9 @@ export async function openChapter(bookId, chapterIndex, restoreScrollRatio = 0) 
 
 export async function openBook(bookId, startChapter = 0, startScroll = 0) {
   const book = await api.getBook(bookId);
+  if (book.media_type === "manga" && onOpenMangaCb) {
+    return onOpenMangaCb(bookId, startChapter);
+  }
   state.currentBook = book;
   state.sessionStartedAt = new Date().toISOString();
   bookTitleEl.textContent = book.title;
@@ -265,11 +279,12 @@ export function scrollToSentence(sentId) {
   el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
 }
 
-export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapterOpened }) {
+export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapterOpened, onOpenManga }) {
   onBackLibraryCb = onBackToLibrary;
   onChapterQuizCb = onChapterQuiz;
   onSaveNoteCb = onSaveNote;
   onChapterOpenedCb = onChapterOpened;
+  onOpenMangaCb = onOpenManga;
 
   const btnChapterQuiz = document.getElementById("btn-chapter-quiz");
   btnChapterQuiz?.addEventListener("click", () => {

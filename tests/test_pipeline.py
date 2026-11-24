@@ -6,6 +6,7 @@ import asyncio
 import base64
 import io
 import json
+import re
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -1812,4 +1813,71 @@ def test_manga_parser_routes_ocr_and_cross_scan_isolation(tmp_path: Path, monkey
             "駅前の商店街へ行こう。",
         ]
     db.set_db_path(None)
+
+
+def test_natural_volume_ordering_and_versioned_static_assets(tmp_path: Path, monkeypatch):
+    """Verify full-width numeric volume ordering and versioned no-store static asset serving."""
+    books_dir = tmp_path / "books"
+    manga_dir = tmp_path / "manga"
+    books_dir.mkdir()
+    manga_dir.mkdir()
+
+    # Deliberately create out-of-order filenames & full-width numerals (10, 2, 11, 1)
+    for num_fw, fname in (("１０", "v10.epub"), ("２", "v2.epub"), ("１１", "v11.epub"), ("１", "v1.epub")):
+        _create_synthetic_manga_epub(manga_dir / fname, title=f"テスト漫画 {num_fw}")
+
+    test_db = tmp_path / "test_order_static.db"
+    monkeypatch.setattr(config, "BOOKS_DIR", books_dir)
+    monkeypatch.setattr(config, "MANGA_DIR", manga_dir)
+    monkeypatch.setattr(config, "DB_PATH", test_db)
+    db.set_db_path(test_db)
+    db.init_db()
+
+    try:
+        with TestClient(app) as client:
+            ordered_manga = client.get("/api/manga").json()["manga"]
+            assert [m["title"] for m in ordered_manga] == [
+                "テスト漫画 １",
+                "テスト漫画 ２",
+                "テスト漫画 １０",
+                "テスト漫画 １１",
+            ]
+
+            ordered_books = client.get("/api/books").json()["books"]
+            assert [b["title"] for b in ordered_books] == [
+                "テスト漫画 １",
+                "テスト漫画 ２",
+                "テスト漫画 １０",
+                "テスト漫画 １１",
+            ]
+
+            # GET / injects versioned CSS & JS URLs with no-store cache headers
+            idx = client.get("/")
+            assert idx.status_code == 200
+            assert "no-store" in idx.headers.get("cache-control", "")
+
+            js_match = re.search(r'src="(/static/v/([a-f0-9]+)/js/main\.js)"', idx.text)
+            css_match = re.search(r'href="(/static/v/([a-f0-9]+)/css/app\.css)"', idx.text)
+            assert js_match is not None
+            assert css_match is not None
+            ver = js_match.group(2)
+            assert css_match.group(2) == ver
+
+            for asset_rel, expected_mime in (
+                ("js/main.js", "javascript"),
+                ("js/library.js", "javascript"),
+                ("js/manga.js", "javascript"),
+                ("css/app.css", "text/css"),
+            ):
+                r = client.get(f"/static/v/{ver}/{asset_rel}")
+                assert r.status_code == 200
+                assert expected_mime in r.headers.get("content-type", "")
+                assert "no-store" in r.headers.get("cache-control", "")
+
+            # Traversal outside STATIC_DIR must 404
+            assert client.get(f"/static/v/{ver}/%2e%2e/pyproject.toml").status_code == 404
+            assert client.get(f"/static/v/{ver}/../pyproject.toml").status_code == 404
+    finally:
+        db.set_db_path(None)
+
 

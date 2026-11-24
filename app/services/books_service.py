@@ -3,12 +3,30 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
 from app import config, db
 from app.epub_parser import compute_file_hash, parse_epub, read_epub_asset
 from app.tokenizer import tokenize_chapter_html
+
+_TITLE_NUM_RE = re.compile(r"(\d+)")
+
+
+def _natural_title_sort_key(title: str) -> list[tuple[int, int, str]]:
+    """Return a Unicode-normalized natural sort key so volume 2 precedes volume 10."""
+    norm = unicodedata.normalize("NFKC", title or "").casefold()
+    key: list[tuple[int, int, str]] = []
+    for part in _TITLE_NUM_RE.split(norm):
+        if not part:
+            continue
+        if part.isdigit():
+            key.append((0, int(part), ""))
+        else:
+            key.append((1, 0, part))
+    return key
 
 
 def _substitute_book_id(html_text: str, book_id: int) -> str:
@@ -172,6 +190,7 @@ def list_books(media_type: str | None = None) -> list[dict[str, Any]]:
                 "chapters": chapters_by_book.get(book_id, []),
             }
         )
+    result.sort(key=lambda item: (_natural_title_sort_key(item["title"]), item["id"]))
     return result
 
 
