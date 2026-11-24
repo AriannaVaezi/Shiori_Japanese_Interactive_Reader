@@ -1,4 +1,4 @@
-/** Adaptive 5-question spaced mini-game (Typed Reading, Match-Up, Meaning, Scramble, Particle, Cloze, Sentence Output). */
+/** Adaptive 10-question spaced mini-game (Typed Reading, Match-Up, Meaning, Scramble, Particle, Cloze). */
 
 import { api } from "./api.js";
 import { normalizeKanaInput, romajiToHiragana } from "./romaji.js";
@@ -25,15 +25,6 @@ const inputReading = document.getElementById("input-quiz-reading");
 const btnTypedCheck = document.getElementById("btn-typed-check");
 const kanaPreview = document.getElementById("quiz-kana-preview");
 const btnTypedShowChoices = document.getElementById("btn-typed-show-choices");
-
-const outputEl = document.getElementById("quiz-output");
-const outputMeaning = document.getElementById("quiz-output-meaning");
-const inputOutput = document.getElementById("input-quiz-output");
-const btnOutputSkip = document.getElementById("btn-output-skip");
-const btnOutputCheck = document.getElementById("btn-output-check");
-const outputSelfCheck = document.getElementById("quiz-output-selfcheck");
-const btnOutputSelfPass = document.getElementById("btn-output-self-pass");
-const btnOutputSelfRetry = document.getElementById("btn-output-self-retry");
 
 const choicesEl = document.getElementById("quiz-choices");
 const matchEl = document.getElementById("quiz-match");
@@ -277,8 +268,6 @@ function renderQuestion() {
   wordHero.hidden = true;
   choicesEl.hidden = true;
   typedEl.hidden = true;
-  outputEl.hidden = true;
-  outputSelfCheck.hidden = true;
   scrambleEl.hidden = true;
   matchEl.hidden = true;
 
@@ -317,22 +306,6 @@ function renderQuestion() {
     kanaPreview.textContent = "—";
     btnTypedShowChoices.hidden = !(q.choices && q.choices.length);
     requestAnimationFrame(() => inputReading.focus());
-    return;
-  }
-
-  if (q.kind === "sentence_output") {
-    wordHero.textContent = q.prompt_word || q.target_display;
-    wordHero.hidden = false;
-    promptSentence.textContent = q.prompt_text || "";
-    outputMeaning.textContent = q.meaning_hint ? `Meaning: ${q.meaning_hint}` : "";
-    outputMeaning.hidden = !q.meaning_hint;
-    outputEl.hidden = false;
-    inputOutput.value = "";
-    inputOutput.disabled = false;
-    btnOutputCheck.disabled = false;
-    btnOutputSkip.disabled = false;
-    btnOutputCheck.textContent = "Check with AI";
-    requestAnimationFrame(() => inputOutput.focus());
     return;
   }
 
@@ -454,7 +427,7 @@ export async function launchQuiz(triggerType = "chapter") {
       book_id: bookId,
       chapter_index: chapterIndex,
       trigger_type: triggerType,
-      max_questions: 5,
+      max_questions: 10,
     };
     if (triggerType === "session" && state.sessionStartedAt) {
       payload.session_started_at = state.sessionStartedAt;
@@ -548,86 +521,6 @@ export function initMiniGame({ onQuizCompleted, onNextChapter, onBackToLibrary }
     const q = sessionState.questions[sessionState.index];
     btnTypedShowChoices.hidden = true;
     renderChoiceButtons(q);
-  });
-
-  // 1-Sentence Output Challenge handlers
-  btnOutputSkip.addEventListener("click", () => {
-    if (!sessionState || sessionState.answered) return;
-    const q = sessionState.questions[sessionState.index];
-    inputOutput.disabled = true;
-    btnOutputCheck.disabled = true;
-    btnOutputSkip.disabled = true;
-    showFeedback(true, q, { skipped: true });
-  });
-
-  btnOutputCheck.addEventListener("click", async () => {
-    if (!sessionState || sessionState.answered) return;
-    const q = sessionState.questions[sessionState.index];
-    const userSentence = inputOutput.value.trim();
-    if (!userSentence) return;
-
-    btnOutputCheck.disabled = true;
-    btnOutputSkip.disabled = true;
-    btnOutputCheck.textContent = "Checking…";
-    outputSelfCheck.hidden = true;
-
-    try {
-      const res = await api.evaluateOutput({
-        target_word: q.prompt_word || q.target_display,
-        reading: q.reading || "",
-        item_type: q.item_type || "word",
-        user_sentence: userSentence,
-        meaning_hint: q.meaning_hint || "",
-      });
-
-      if (res.llm_unavailable) {
-        btnOutputCheck.disabled = false;
-        btnOutputSkip.disabled = false;
-        btnOutputCheck.textContent = "Check with AI";
-        outputSelfCheck.hidden = false;
-        return;
-      }
-
-      inputOutput.disabled = true;
-      showFeedback(Boolean(res.passed), q, {
-        badgeText: res.passed ? "✓ Nice sentence!" : "✎ Good try — check the tip",
-        fullText: res.natural_version ? `Natural phrasing: ${res.natural_version}` : userSentence,
-        expText: [res.verdict, res.grammar_tip].filter(Boolean).join(" "),
-      });
-    } catch {
-      btnOutputCheck.disabled = false;
-      btnOutputSkip.disabled = false;
-      btnOutputCheck.textContent = "Check with AI";
-      outputSelfCheck.hidden = false;
-    }
-  });
-
-  btnOutputSelfPass.addEventListener("click", () => {
-    if (!sessionState || sessionState.answered) return;
-    const q = sessionState.questions[sessionState.index];
-    inputOutput.disabled = true;
-    btnOutputCheck.disabled = true;
-    btnOutputSkip.disabled = true;
-    outputSelfCheck.hidden = true;
-    showFeedback(true, q, {
-      badgeText: "✓ Self-checked",
-      fullText: inputOutput.value.trim(),
-      expText: q.example_hint ? `Example: ${q.example_hint}` : "",
-    });
-  });
-
-  btnOutputSelfRetry.addEventListener("click", () => {
-    if (!sessionState || sessionState.answered) return;
-    const q = sessionState.questions[sessionState.index];
-    inputOutput.disabled = true;
-    btnOutputCheck.disabled = true;
-    btnOutputSkip.disabled = true;
-    outputSelfCheck.hidden = true;
-    showFeedback(false, q, {
-      badgeText: "Marked for extra practice",
-      fullText: q.example_hint ? `Example: ${q.example_hint}` : q.target_display,
-      expText: q.meaning_hint || "",
-    });
   });
 
   // Scramble handlers

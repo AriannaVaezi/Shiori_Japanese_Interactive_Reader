@@ -528,7 +528,7 @@ def test_quiz_and_trouble_lifecycle(temp_env, monkeypatch: pytest.MonkeyPatch):
 
         kinds = [q["kind"] for q in questions]
         assert "scramble" in kinds
-        assert "sentence_output" in kinds
+        assert "sentence_output" not in kinds
         assert kinds.count("cloze") <= 1
         non_cloze_vocab = [
             q
@@ -552,9 +552,6 @@ def test_quiz_and_trouble_lifecycle(temp_env, monkeypatch: pytest.MonkeyPatch):
                 assert "＿＿" in q["blanked_sentence"]
                 assert len(q["choices"]) == 4
                 assert q["correct_answer"] in q["choices"]
-            elif q["kind"] == "sentence_output":
-                assert q["prompt_word"]
-                assert q["prompt_text"]
             else:
                 assert q["kind"] in {"typed_reading", "reading_recall", "meaning_match", "def_to_word"}
                 if q["kind"] == "typed_reading":
@@ -854,22 +851,7 @@ def test_non_cloze_vocab_question_builders(temp_env):
     assert "FAKE LLM SENTENCE" not in cq["full_sentence"]
     assert cq["blanked_sentence"].replace("＿＿＿", cq["correct_answer"], 1) == cq["full_sentence"]
 
-    # 5. Sentence output hints strictly use JMdict + book text
-    sq = quiz_service._build_sentence_output_question(
-        q_idx=4,
-        target_word="風景",
-        reading="ふうけい",
-        item_type="word",
-        trouble_item_id=None,
-        sent_text="窓から綺麗な風景が見える。",
-    )
-    assert sq is not None
-    assert "scenery" in sq["meaning_hint"].lower()
-    assert sq["example_hint"] == "窓から綺麗な風景が見える。"
-    assert "POISONED" not in sq["explanation"]
-    assert "FAKE LLM SENTENCE" not in sq["example_hint"]
-
-    # 6. 4-Pair Match-Up (JMdict meanings only) + multi-item trouble credit on submit
+    # 5. 4-Pair Match-Up (JMdict meanings only) + multi-item trouble credit on submit
     with db.get_conn() as conn:
         t1 = int(
             conn.execute(
@@ -1013,7 +995,7 @@ def test_llamacpp_provider_and_settings(temp_env, monkeypatch: pytest.MonkeyPatc
         assert post_call[3]["Authorization"] == "Bearer local-secret-token-9999"
 
 
-def test_long_term_quiz_mixing_and_output_eval(temp_env, monkeypatch: pytest.MonkeyPatch):
+def test_long_term_quiz_mixing_and_ten_question_default(temp_env):
     with TestClient(app) as client:
         books = client.get("/api/books").json()["books"]
         book1 = books[0]
@@ -1035,7 +1017,7 @@ def test_long_term_quiz_mixing_and_output_eval(temp_env, monkeypatch: pytest.Mon
                 """,
                 (book1["id"], ch1_idx, past_due),
             )
-            # 2) Cooling-down item (Stage 1, due in future) -> MUST NOT appear in quiz
+            # 2) Cooling-down item (Stage 1, due in future) -> MUST NOT appear in prioritized queue
             conn.execute(
                 """
                 INSERT INTO trouble_items
@@ -1063,67 +1045,30 @@ def test_long_term_quiz_mixing_and_output_eval(temp_env, monkeypatch: pytest.Mon
         assert qs[0]["is_aged"] is True
         assert qs[0]["kind"] == "typed_reading"
         assert all(q["target_display"] != "小鳥" for q in qs)
-        assert qs[-1]["kind"] == "sentence_output"
+        assert all(q["kind"] != "sentence_output" for q in qs)
 
-        # Test skipped output doesn't affect score
-        skip_sub = client.post(
-            "/api/quiz/submit",
+        # Default max_questions is 10 and never generates sentence_output
+        quiz_default = client.post(
+            "/api/quiz/generate",
             json={
                 "book_id": book1["id"],
                 "chapter_index": ch1_idx,
                 "trigger_type": "chapter",
-                "results": [
-                    {"question_id": "q_0", "kind": "typed_reading", "trouble_item_id": None, "correct": True},
-                    {"question_id": "q_4", "kind": "sentence_output", "trouble_item_id": None, "correct": True, "skipped": True},
-                ],
             },
         ).json()
-        assert skip_sub["score"] == 1
-        assert skip_sub["total"] == 1
+        qs_default = quiz_default["questions"]
+        assert len(qs_default) == 10
+        assert all(q["kind"] != "sentence_output" for q in qs_default)
+        assert [q["question_id"] for q in qs_default] == [f"q_{i}" for i in range(10)]
 
-        # Output evaluation with mocked LLM
-        async def fake_eval(**kwargs):
-            return (
-                json.dumps(
-                    {
-                        "passed": True,
-                        "verdict": "Great use of 商店街!",
-                        "grammar_tip": "Particles で and に are natural here.",
-                        "natural_version": "駅前の商店街でパンを買った。",
-                    },
-                    ensure_ascii=False,
-                ),
-                "llamacpp",
-                "Qwen3-8B",
-            )
-
-        monkeypatch.setattr(llm, "generate_text", fake_eval)
-        ev_ok = client.post(
-            "/api/quiz/evaluate-output",
-            json={
-                "target_word": "商店街",
-                "reading": "しょうてんがい",
-                "user_sentence": "商店街で買い物をした。",
-            },
-        ).json()
-        assert ev_ok["llm_unavailable"] is False
-        assert ev_ok["passed"] is True
-        assert ev_ok["natural_version"]
-
-        # Graceful offline fallback when LLM is unreachable
-        monkeypatch.setattr(
-            llm,
-            "generate_text",
-            AsyncMock(side_effect=llm.LLMUnavailableError("Server offline")),
+        # Output evaluation endpoint removed
+        assert (
+            client.post(
+                "/api/quiz/evaluate-output",
+                json={"target_word": "商店街", "user_sentence": "商店街に行く。"},
+            ).status_code
+            == 404
         )
-        ev_down = client.post(
-            "/api/quiz/evaluate-output",
-            json={
-                "target_word": "商店街",
-                "user_sentence": "商店街に行く。",
-            },
-        ).json()
-        assert ev_down["llm_unavailable"] is True
 
 
 def test_llamacpp_manager_and_autostart_settings(

@@ -1681,15 +1681,13 @@ html[data-theme="dark"] .aged-badge {
   color: #f3cd7a;
 }
 
-.quiz-typed,
-.quiz-output {
+.quiz-typed {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.quiz-typed input,
-.quiz-output textarea {
+.quiz-typed input {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -1700,33 +1698,11 @@ html[data-theme="dark"] .aged-badge {
   font-size: 16px;
 }
 
-.typed-subrow,
-.output-actions {
+.typed-subrow {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-}
-
-.output-actions {
-  justify-content: flex-end;
-}
-
-.output-selfcheck {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-border);
-}
-
-.output-selfcheck-btns {
-  display: flex;
-  gap: 6px;
 }
 
 /* Library Filter Tabs & Manga Badge */

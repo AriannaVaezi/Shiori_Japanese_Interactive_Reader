@@ -138,12 +138,6 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
-  evaluateOutput(payload) {
-    return request("/api/quiz/evaluate-output", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-  },
   getQuizHistory(bookId = null, limit = 15) {
     const params = new URLSearchParams();
     if (bookId != null) params.set("book_id", String(bookId));

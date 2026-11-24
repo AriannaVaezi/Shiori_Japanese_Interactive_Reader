@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from app import db, dictionary, llm
+from app import db, dictionary
 from app.services import books_service
 from app.tokenizer import (
     chunk_into_bunsetsu,
@@ -767,140 +767,6 @@ def _build_typed_reading_question(
     }
 
 
-def _build_sentence_output_question(
-    *,
-    q_idx: int,
-    target_word: str,
-    reading: str,
-    item_type: str,
-    trouble_item_id: int | None,
-    sent_text: str = "",
-    fallback: bool = False,
-    is_aged: bool = False,
-) -> dict[str, Any] | None:
-    """Create a 1-sentence AI-coached active production challenge using JMdict + book text."""
-    clean_target = (target_word or "").strip()
-    if not clean_target:
-        return None
-
-    meta = (
-        _get_word_meta(clean_target, reading)
-        if item_type == "word"
-        else {"en_gloss": None, "explanation": sent_text or clean_target}
-    )
-    meaning_hint = meta["en_gloss"] or ""
-    if not meaning_hint and item_type == "grammar":
-        meaning_hint = (
-            f"Pattern from: {sent_text}"
-            if sent_text
-            else "Practice this expression in a new sentence."
-        )
-    example_hint = sent_text.strip() if sent_text else ""
-
-    return {
-        "question_id": f"q_{q_idx}",
-        "kind": "sentence_output",
-        "trouble_item_id": trouble_item_id,
-        "item_type": item_type,
-        "prompt_label": "Use It in a Sentence",
-        "target_display": clean_target,
-        "prompt_word": clean_target,
-        "reading": reading,
-        "prompt_text": f"Write 1 short Japanese sentence using 「{clean_target}」 (simple Japanese is fine!):",
-        "meaning_hint": meaning_hint,
-        "example_hint": example_hint,
-        "correct_answer": clean_target,
-        "full_sentence": example_hint or clean_target,
-        "hint": meaning_hint,
-        "explanation": meta["explanation"],
-        "fallback": fallback,
-        "is_aged": is_aged,
-    }
-
-
-_OUTPUT_EVAL_SYSTEM_PROMPT = """You are a friendly Japanese writing coach helping an English-speaking learner practice vocabulary.
-The learner wrote 1 short Japanese sentence using the target word or expression.
-If the sentence is understandable and genuinely attempts the target word/expression, set "passed": true.
-
-Respond strictly with valid JSON (no markdown fences) and write "verdict" and "grammar_tip" strictly in English (NEVER use Chinese):
-{
-  "passed": true,
-  "verdict": "1-sentence encouraging evaluation in English",
-  "grammar_tip": "1-sentence particle, conjugation, or nuance tip in English (or praise if already natural)",
-  "natural_version": "1 natural Japanese sentence expressing the learner's idea"
-}"""
-
-
-_OUTPUT_EVAL_JSON_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {
-        "passed": {"type": "boolean"},
-        "verdict": {"type": "string", "minLength": 1},
-        "grammar_tip": {"type": "string"},
-        "natural_version": {"type": "string"},
-    },
-    "required": ["passed", "verdict", "grammar_tip", "natural_version"],
-    "additionalProperties": False,
-}
-
-
-async def evaluate_output_sentence(
-    *,
-    target_word: str,
-    reading: str = "",
-    item_type: str = "word",
-    user_sentence: str,
-    meaning_hint: str = "",
-) -> dict[str, Any]:
-    """Ask the configured LLM to gently coach a learner-written Japanese sentence."""
-    clean_sentence = (user_sentence or "").strip()
-    if not clean_sentence:
-        return {
-            "llm_unavailable": False,
-            "passed": False,
-            "verdict": "Please write a short sentence first (or click Skip).",
-            "grammar_tip": "",
-            "natural_version": "",
-        }
-
-    user_prompt = (
-        f"Target ({item_type}): {target_word}"
-        + (f" ({reading})" if reading else "")
-        + "\n"
-        + (f"Dictionary meaning: {meaning_hint}\n" if meaning_hint else "")
-        + f"Learner sentence: {clean_sentence}\n\n"
-        "Evaluate this sentence in concise English (never Chinese) and suggest 1 natural Japanese phrasing."
-    )
-
-    settings = db.get_all_settings()
-    try:
-        raw_text, provider, model = await llm.generate_text(
-            settings=settings,
-            system_prompt=_OUTPUT_EVAL_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
-            expect_json=True,
-            json_schema=_OUTPUT_EVAL_JSON_SCHEMA,
-        )
-        parsed = llm.extract_json_object(raw_text)
-        verdict = str(parsed.get("verdict") or "").strip()
-        if not verdict:
-            raise ValueError("Missing verdict in LLM evaluation JSON.")
-        return {
-            "llm_unavailable": False,
-            "passed": bool(parsed.get("passed", True)),
-            "verdict": verdict,
-            "grammar_tip": str(parsed.get("grammar_tip") or "").strip(),
-            "natural_version": str(parsed.get("natural_version") or "").strip(),
-            "provider": provider,
-            "model": model,
-        }
-    except (llm.LLMError, ValueError) as exc:
-        return {
-            "llm_unavailable": True,
-            "error": str(exc),
-        }
-
-
 def _normalize_iso_utc(ts: str | None) -> str | None:
     if not ts or not ts.strip():
         return None
@@ -993,10 +859,10 @@ def generate_quiz(
     book_id: int,
     chapter_index: int,
     trigger_type: str = "chapter",
-    max_questions: int = 5,
+    max_questions: int = 10,
     session_started_at: str | None = None,
 ) -> dict[str, Any]:
-    """Build an adaptive mini-game mixing aged spaced recall, fresh items, and 1 output prompt."""
+    """Build an adaptive mini-game mixing aged spaced recall and fresh active-recall items."""
     sentences = _load_chapter_sentences(book_id, chapter_index)
     vocab_pool = extract_chapter_vocab_pool(sentences)
     norm_session_ts = _normalize_iso_utc(session_started_at)
@@ -1056,12 +922,10 @@ def generate_quiz(
         )
     )
 
-    # Reserve 1 slot at the end for an active sentence production challenge when possible
-    reserve_output = max_questions >= 4 and bool(all_active or vocab_pool)
-    slot_limit = max_questions - 1 if reserve_output else max_questions
+    slot_limit = max_questions
 
-    # Prioritize aged items (up to 3) mixed with fresh Stage 0 items
-    aged_cap = min(3, slot_limit)
+    # Prioritize aged items (up to half the round, minimum 3 when available) mixed with fresh Stage 0 items
+    aged_cap = min(max(3, max_questions // 2), slot_limit)
     ordered_queue: list[tuple[dict[str, Any], bool]] = [
         (item, True) for item in ready_aged[:aged_cap]
     ] + [(item, False) for item in fresh_active]
@@ -1306,53 +1170,6 @@ def generate_quiz(
                 q["is_aged"] = False
                 questions.append(q)
                 used_sentences.add(q["full_sentence"])
-
-    # Append 1 active sentence production prompt when reserved
-    if reserve_output and len(questions) < max_questions:
-        out_q: dict[str, Any] | None = None
-        # Prefer an unquizzed trouble item (aged first), then chapter vocab, then any trouble item
-        unquizzed = [(t, aged) for t, aged in ordered_queue if int(t["id"]) not in used_trouble_ids]
-        if unquizzed:
-            t_item, t_aged = unquizzed[0]
-            out_q = _build_sentence_output_question(
-                q_idx=len(questions),
-                target_word=t_item["display_text"],
-                reading=t_item.get("reading") or "",
-                item_type=t_item["item_type"],
-                trouble_item_id=int(t_item["id"]),
-                sent_text=t_item.get("sent_text") or "",
-                fallback=False,
-                is_aged=t_aged,
-            )
-        if out_q is None:
-            for v in vocab_pool:
-                if v["lemma"] not in used_words:
-                    out_q = _build_sentence_output_question(
-                        q_idx=len(questions),
-                        target_word=v["lemma"],
-                        reading=v.get("reading") or "",
-                        item_type="word",
-                        trouble_item_id=None,
-                        sent_text=v.get("sentence_text") or "",
-                        fallback=True,
-                        is_aged=False,
-                    )
-                    if out_q is not None:
-                        break
-        if out_q is None and ordered_queue:
-            t_item, t_aged = ordered_queue[-1]
-            out_q = _build_sentence_output_question(
-                q_idx=len(questions),
-                target_word=t_item["display_text"],
-                reading=t_item.get("reading") or "",
-                item_type=t_item["item_type"],
-                trouble_item_id=None,
-                sent_text=t_item.get("sent_text") or "",
-                fallback=False,
-                is_aged=t_aged,
-            )
-        if out_q is not None:
-            questions.append(out_q)
 
     for idx, q in enumerate(questions):
         q["question_id"] = f"q_{idx}"

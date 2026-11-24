@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -16,7 +14,7 @@ class QuizGenerateRequest(BaseModel):
     book_id: int
     chapter_index: int
     trigger_type: str = "chapter"
-    max_questions: int = 5
+    max_questions: int = 10
     session_started_at: str | None = None
 
 
@@ -36,22 +34,14 @@ class QuizSubmitRequest(BaseModel):
     results: list[QuizResultItem]
 
 
-class OutputEvalRequest(BaseModel):
-    target_word: str
-    reading: str = ""
-    item_type: str = "word"
-    user_sentence: str
-    meaning_hint: str = ""
-
-
 @router.post("/generate")
 def generate_quiz(req: QuizGenerateRequest):
-    """Generate up to 5 adaptive review questions for the current chapter/session."""
+    """Generate up to 10 adaptive review questions for the current chapter/session."""
     return quiz_service.generate_quiz(
         book_id=req.book_id,
         chapter_index=req.chapter_index,
         trigger_type=req.trigger_type,
-        max_questions=max(1, min(req.max_questions, 10)),
+        max_questions=max(1, min(req.max_questions, 15)),
         session_started_at=req.session_started_at,
     )
 
@@ -64,18 +54,6 @@ def submit_quiz(req: QuizSubmitRequest):
         chapter_index=req.chapter_index,
         trigger_type=req.trigger_type,
         results=[r.model_dump() for r in req.results],
-    )
-
-
-@router.post("/evaluate-output")
-async def evaluate_output(req: OutputEvalRequest):
-    """Evaluate a learner-written Japanese sentence for the 1-sentence output quiz prompt."""
-    return await quiz_service.evaluate_output_sentence(
-        target_word=req.target_word,
-        reading=req.reading,
-        item_type=req.item_type,
-        user_sentence=req.user_sentence,
-        meaning_hint=req.meaning_hint,
     )
 
 

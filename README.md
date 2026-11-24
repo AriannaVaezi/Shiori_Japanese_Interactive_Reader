@@ -46,7 +46,7 @@ A local web app for learning Japanese by reading your own EPUB books and EPUB/CB
 - **Idle-Aware Reading Timer:** Tracks active reading time in the top bar (pauses automatically after 60s of inactivity or when the tab/reader is hidden), supports `Off` / `10m` / `15m` / `20m` / `30m` intervals, and pulses **`Review Ready`** gently when your goal is reached.
 
 ### 6. Zero-Backlog Long-Term Retention Mini-Games
-Trigger a 5-question round from **Clear Chapter Quiz (5 Qs)** at the end of a chapter, **Review Quiz** in the timer popover, **Radar**, or the **`Done · Quiz`** session wrap-up button (which saves progress and mixes cooled-down aged items with fresh trouble items from the current reading session):
+Trigger a 10-question round from **Clear Chapter Quiz (10 Qs)** at the end of a chapter, **Review Quiz** in the timer popover, **Radar**, or the **`Done · Quiz`** session wrap-up button (which saves progress and mixes cooled-down aged items with fresh trouble items from the current reading session):
 
 - **Typed Reading Recall (`typed_reading`):** Active recall without multiple-choice hints for JMdict-verified kanji words—type any valid hiragana reading directly with live romaji-to-hiragana conversion (`static/js/romaji.js`), or click **`Show 4 Choices`** if you need a nudge.
 - **Kanji → Reading (`reading_recall`):** Isolated JMdict-verified word with no furigana and no story context; pick the right hiragana reading against phonetic distractors that exclude valid alternate readings.
@@ -54,11 +54,10 @@ Trigger a 5-question round from **Clear Chapter Quiz (5 Qs)** at the end of a ch
 - **Meaning → Word (`def_to_word`):** Reverse recall from offline JMdict dictionary definition back to the Japanese word.
 - **Vocab Match-Up (`match_pairs`):** Interactive 4-pair word-to-JMdict-meaning board updating all included trouble words together.
 - **Text Context Cloze (`cloze`):** Capped at most 1 per round, strictly matched on exact whole-word token spans inside real chapter sentences.
-- **1-Sentence Output Challenge (`sentence_output`):** Write one original Japanese sentence using a target trouble word; evaluate grammar and naturalness in English with your LLM (**`Check with AI`**), or use **`Self-Check`** / **`Skip`** when offline.
 - **Bunsetsu Scramble (`scramble`):** Splits exact chapter sentences into grammatical chunks via `SudachiPy` and grades exact sentence reconstruction.
 - **Particle Fix (`particle`):** Blanks an isolated particle (`は`, `が`, `を`, `に`, `で`, `も`, etc.) inside an exact chapter sentence with confusable choices.
 
-**3-Stage Cool-Down Spacing (No Backlog):** Stage `0` trouble items fade their automatic `Trouble`-mode furigana once recalled correctly and advance to Stage `1` (`20h` cool-down), then Stage `2` (`72h` cool-down), and finally retire at Stage `3`. Incorrect answers reset an item back to Stage `0`. Each round prioritizes up to 3 cooled-down aged items alongside fresh trouble words and skips items still inside their cool-down window—so you get real spacing without an accumulating due queue.
+**3-Stage Cool-Down Spacing (No Backlog):** Stage `0` trouble items fade their automatic `Trouble`-mode furigana once recalled correctly and advance to Stage `1` (`20h` cool-down), then Stage `2` (`72h` cool-down), and finally retire at Stage `3`. Incorrect answers reset an item back to Stage `0`. Each 10-question round prioritizes up to 5 cooled-down aged items alongside fresh trouble words and skips items still inside their cool-down window—so you get real spacing without an accumulating due queue.
 
 ### Keyboard Shortcuts
 - **Novels:** `[` / `]` for Previous / Next chapter
@@ -111,7 +110,7 @@ Trigger a 5-question round from **Clear Chapter Quiz (5 Qs)** at the end of a ch
 | **Lookup & Radar** | `POST /api/lookup/jj`, `POST /api/lookup/en`, `GET /api/trouble`, `POST /api/trouble/{id}/retire` |
 | **Grammar Q&A** | `POST /api/grammar/ask`, `GET /api/grammar/threads/{book_id}/{chapter_idx}`, `DELETE /api/grammar/threads/{id}` |
 | **Saved Quotes & Notes** | `GET /api/notes`, `POST /api/notes`, `PUT /api/notes/{id}`, `DELETE /api/notes/{id}` |
-| **Quizzes** | `POST /api/quiz/generate`, `POST /api/quiz/evaluate-output`, `POST /api/quiz/submit`, `GET /api/quiz/history` |
+| **Quizzes** | `POST /api/quiz/generate`, `POST /api/quiz/submit`, `GET /api/quiz/history` |
 | **Settings & LLM** | `GET /api/settings`, `PUT /api/settings`, `GET /api/llm/llamacpp-models`, `GET /api/llm/ollama-models`, `POST /api/llm/test` |
 
 ---
