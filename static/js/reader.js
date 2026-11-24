@@ -1,12 +1,19 @@
 /** Chapter reader view, vertical/horizontal layouts, furigana modes, and scroll persistence. */
 
 import { api } from "./api.js";
-import { closeGrammarDrawer, loadChapterGrammarThreads, openGrammarForSentence } from "./grammar.js";
+import {
+  closeGrammarDrawer,
+  dockGrammarDrawer,
+  loadChapterGrammarThreads,
+  openGrammarForSentence,
+} from "./grammar.js";
 import { closeLookup, openSelectionLookup, openWordLookup } from "./lookup.js";
 import { extractCleanText, extractRangeCleanText, state } from "./state.js";
 
 const libraryView = document.getElementById("library-view");
 const readerView = document.getElementById("reader-view");
+const mangaView = document.getElementById("manga-view");
+const mangaTokensEl = document.getElementById("manga-text-tokens");
 const bookTitleEl = document.getElementById("reader-book-title");
 const chapterSelect = document.getElementById("chapter-select");
 const btnBack = document.getElementById("btn-back-library");
@@ -118,7 +125,7 @@ function scheduleProgressSave() {
   saveScrollTimer = setTimeout(() => flushProgress(true), 700);
 }
 
-function hideSelectionTooltip() {
+export function hideSelectionTooltip() {
   selectionTooltip.hidden = true;
   pendingSelection = null;
 }
@@ -223,6 +230,9 @@ export async function openBook(bookId, startChapter = 0, startScroll = 0) {
   }
 
   libraryView.hidden = true;
+  if (mangaView) mangaView.hidden = true;
+  document.documentElement.classList.remove("manga-fullscreen");
+  dockGrammarDrawer(document.getElementById("reader-workspace"));
   readerView.hidden = false;
   closeGrammarDrawer();
   applyVisualSettings();
@@ -358,8 +368,11 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapt
 
   // Passage selection bar for Look Up, Chat, Grammar, or saving quotes/notes
   document.addEventListener("mouseup", (e) => {
-    if (readerView.hidden) return;
-    if (!contentEl.contains(e.target)) {
+    const inReader = !readerView.hidden;
+    const inManga = mangaView && !mangaView.hidden;
+    if (!inReader && !inManga) return;
+    const activeContainer = inReader ? contentEl : mangaTokensEl;
+    if (!activeContainer || !activeContainer.contains(e.target)) {
       if (!selectionTooltip.contains(e.target)) hideSelectionTooltip();
       return;
     }

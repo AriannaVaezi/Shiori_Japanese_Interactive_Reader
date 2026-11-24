@@ -5,6 +5,7 @@ import { state } from "./state.js";
 
 const btnOpen = document.getElementById("btn-open-trouble");
 const countBadge = document.getElementById("trouble-count-badge");
+const mangaCountBadge = document.getElementById("manga-trouble-count-badge");
 const modal = document.getElementById("trouble-modal");
 const btnClose = document.getElementById("btn-close-trouble");
 const tabActive = document.getElementById("tab-trouble-active");
@@ -36,14 +37,21 @@ function formatMemoryStage(item) {
   return `Stage ${stage} · next in ${wait}`;
 }
 
+function syncTroubleCountBadge(count) {
+  countBadge.textContent = String(count);
+  countBadge.hidden = count === 0;
+  if (mangaCountBadge) {
+    mangaCountBadge.textContent = String(count);
+    mangaCountBadge.hidden = count === 0;
+  }
+}
+
 export async function refreshTroubleBadge() {
   const bookId = state.currentBook?.id ?? null;
   try {
     const data = await api.getTrouble({ bookId, includeRetired: false, limit: 100 });
     state.troubleItems = data.items || [];
-    const count = state.troubleItems.length;
-    countBadge.textContent = String(count);
-    countBadge.hidden = count === 0;
+    syncTroubleCountBadge(state.troubleItems.length);
   } catch {
     // ignore background badge refresh errors
   }
@@ -90,8 +98,7 @@ async function renderCurrentTab() {
     const allItems = res.items || [];
     const activeItems = allItems.filter((i) => !i.retired);
     state.troubleItems = activeItems;
-    countBadge.textContent = String(activeItems.length);
-    countBadge.hidden = activeItems.length === 0;
+    syncTroubleCountBadge(activeItems.length);
 
     const filtered = currentTab === "retired"
       ? allItems.filter((i) => i.retired)

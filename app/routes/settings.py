@@ -32,6 +32,9 @@ class SettingsUpdateRequest(BaseModel):
     theme: str | None = None
     font_size: str | None = None
     quiz_timer_minutes: str | None = None
+    manga_layout: str | None = None
+    manga_spread_offset: str | None = None
+    manga_ocr_overlay: str | None = None
 
 
 class LLMTestRequest(BaseModel):

@@ -45,14 +45,35 @@ _DAKUTEN_SWAPS = {
 
 
 def _load_chapter_sentences(book_id: int, chapter_index: int) -> list[dict[str, str]]:
-    """Ensure the chapter is tokenized and return its segmented sentences list."""
+    """Ensure the chapter is tokenized and return its segmented sentences list (or manga OCR blocks)."""
     with db.get_conn() as conn:
         row = conn.execute(
             "SELECT sentences_json FROM chapters WHERE book_id = ? AND chapter_index = ?",
             (book_id, chapter_index),
         ).fetchone()
     if row is None:
-        return []
+        with db.get_conn() as conn:
+            manga_rows = conn.execute(
+                """
+                SELECT page_index, ocr_json FROM manga_pages
+                WHERE book_id = ? AND ocr_json IS NOT NULL
+                ORDER BY ABS(page_index - ?) ASC, page_index ASC
+                LIMIT 15
+                """,
+                (book_id, chapter_index),
+            ).fetchall()
+        manga_sentences: list[dict[str, str]] = []
+        for mr in manga_rows:
+            try:
+                ocr_data = json.loads(mr["ocr_json"])
+            except Exception:
+                continue
+            for blk in ocr_data.get("blocks") or []:
+                blk_text = (blk.get("text") or "").strip()
+                blk_id = (blk.get("block_id") or "").strip()
+                if blk_text and blk_id:
+                    manga_sentences.append({"sent_id": blk_id, "text": blk_text})
+        return manga_sentences
     if not row["sentences_json"]:
         books_service.get_chapter(book_id, chapter_index)
         with db.get_conn() as conn:

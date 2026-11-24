@@ -1,9 +1,16 @@
-/** Frontend application bootstrap wiring Library, Reader, Lookup, Grammar, Notes, Trouble Radar, Timer, and Mini-Games. */
+/** Frontend application bootstrap wiring Library, Novel Reader, Manga Reader, Lookup, Grammar, Notes, Trouble Radar, Timer, and Mini-Games. */
 
 import { api } from "./api.js";
 import { closeGrammarDrawer, initGrammar, openGrammarForSentence } from "./grammar.js";
 import { initLibrary, loadLibrary, showLibraryView } from "./library.js";
 import { closeLookup, initLookup } from "./lookup.js";
+import {
+  closeMangaReader,
+  goToMangaPage,
+  initManga,
+  openManga,
+  refreshMangaTokenHighlights,
+} from "./manga.js";
 import { initMiniGame, launchQuiz } from "./minigame.js";
 import { closeNotesModal, initNotes, openNotesModal, refreshNotesBadge } from "./notes.js";
 import {
@@ -18,13 +25,40 @@ import {
 import { closeSettingsModal, initSettings, openSettingsModal } from "./settings.js";
 import { state } from "./state.js";
 import { initTimer, renderTimerUI, resetTimer } from "./timer.js";
-import { closeTroubleModal, initTrouble, refreshTroubleBadge } from "./trouble.js";
+import {
+  closeTroubleModal,
+  initTrouble,
+  openTroubleModal,
+  refreshTroubleBadge,
+} from "./trouble.js";
 
-function leaveReaderToLibrary() {
+async function leaveReaderToLibrary() {
   closeLookup();
   closeGrammarDrawer();
+  await closeMangaReader({ flush: false });
   document.getElementById("reader-view").hidden = true;
   showLibraryView();
+}
+
+function refreshActiveHighlights() {
+  refreshChapterHighlights();
+  refreshMangaTokenHighlights();
+}
+
+async function resolveMediaType(bookId) {
+  if (state.currentBook?.id === bookId && state.currentBook.media_type) {
+    return state.currentBook.media_type;
+  }
+  const listed = (state.books || []).find((b) => b.id === bookId);
+  if (listed?.media_type) {
+    return listed.media_type;
+  }
+  try {
+    const detail = await api.getBook(bookId);
+    return detail.media_type || "novel";
+  } catch {
+    return "novel";
+  }
 }
 
 async function bootstrap() {
@@ -43,13 +77,26 @@ async function bootstrap() {
   });
   initTrouble({
     onLaunchQuiz: (triggerType) => launchQuiz(triggerType),
-    onHighlightsChanged: () => refreshChapterHighlights(),
+    onHighlightsChanged: refreshActiveHighlights,
   });
   initNotes({
     onJumpToNote: async ({ bookId, chapterIndex, sentId }) => {
+      const mediaType = await resolveMediaType(bookId);
       const sameBook = state.currentBook?.id === bookId;
       const sameChap = state.currentChapter?.chapter_index === chapterIndex;
-      if (!sameBook) {
+
+      if (mediaType === "manga") {
+        const inMangaView = !document.getElementById("manga-view").hidden;
+        if (!sameBook || !inMangaView) {
+          await openManga(bookId, chapterIndex);
+        } else if (!sameChap) {
+          await goToMangaPage(chapterIndex);
+        }
+        return;
+      }
+
+      const inReaderView = !document.getElementById("reader-view").hidden;
+      if (!sameBook || !inReaderView) {
         await openBook(bookId, chapterIndex, 0);
       } else if (!sameChap) {
         await openChapter(bookId, chapterIndex, 0);
@@ -58,13 +105,13 @@ async function bootstrap() {
         requestAnimationFrame(() => scrollToSentence(sentId));
       }
     },
-    onNotesChanged: () => refreshChapterHighlights(),
+    onNotesChanged: refreshActiveHighlights,
   });
   initMiniGame({
     onQuizCompleted: () => {
       resetTimer();
       refreshTroubleBadge();
-      refreshChapterHighlights();
+      refreshActiveHighlights();
     },
     onNextChapter: () => advanceChapter(1),
     onBackToLibrary: leaveReaderToLibrary,
@@ -72,7 +119,10 @@ async function bootstrap() {
   initLookup({
     onAskGrammar: (ctx) => openGrammarForSentence(ctx),
     onSaveNote: (ctx) => openNotesModal(ctx),
-    onLookupLogged: () => refreshTroubleBadge(),
+    onLookupLogged: () => {
+      refreshTroubleBadge();
+      refreshMangaTokenHighlights();
+    },
   });
   initReader({
     onBackToLibrary: () => showLibraryView(),
@@ -84,8 +134,21 @@ async function bootstrap() {
       renderTimerUI();
     },
   });
+  initManga({
+    onBackToLibrary: () => showLibraryView(),
+    onSaveNote: (ctx) => openNotesModal(ctx),
+    onOpenTrouble: openTroubleModal,
+    onOpenSettings: openSettingsModal,
+    onOpenNotes: () => openNotesModal(),
+    onPageChanged: () => {
+      refreshTroubleBadge();
+      refreshNotesBadge();
+      refreshMangaTokenHighlights();
+    },
+  });
   initLibrary({
     onOpenBook: (bookId, chIdx, scrollRatio) => openBook(bookId, chIdx, scrollRatio),
+    onOpenManga: (bookId, pageIdx) => openManga(bookId, pageIdx),
   });
 
   document

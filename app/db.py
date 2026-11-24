@@ -69,7 +69,21 @@ def init_db() -> None:
                 author TEXT NOT NULL,
                 cover_href TEXT,
                 chapter_count INTEGER DEFAULT 0,
+                media_type TEXT NOT NULL DEFAULT 'novel',
                 added_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS manga_pages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+                page_index INTEGER NOT NULL,
+                image_href TEXT NOT NULL,
+                width INTEGER NOT NULL DEFAULT 0,
+                height INTEGER NOT NULL DEFAULT 0,
+                is_spread INTEGER NOT NULL DEFAULT 0,
+                ocr_json TEXT,
+                ocr_updated_at TEXT,
+                UNIQUE(book_id, page_index)
             );
 
             CREATE TABLE IF NOT EXISTS chapters (
@@ -192,6 +206,13 @@ def init_db() -> None:
         ):
             if col_name not in existing_cols:
                 conn.execute(f"ALTER TABLE trouble_items ADD COLUMN {col_name} {col_def}")
+
+        book_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(books)").fetchall()
+        }
+        if "media_type" not in book_cols:
+            conn.execute("ALTER TABLE books ADD COLUMN media_type TEXT NOT NULL DEFAULT 'novel'")
 
         for key, default_val in config.DEFAULT_SETTINGS.items():
             conn.execute(

@@ -2,6 +2,8 @@
 data/
 books/*
 !books/.gitkeep
+manga/*
+!manga/.gitkeep
 __pycache__/
 *.py[cod]
 *.pyo

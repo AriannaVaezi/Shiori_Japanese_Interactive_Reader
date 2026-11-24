@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
@@ -15,15 +16,18 @@ import httpx
 import pytest
 from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app import config, db, dictionary, llamacpp_manager, llm
 from app.epub_parser import parse_epub, read_epub_asset
 from app.main import app
-from app.services import grammar_service, lookup_service, quiz_service
+from app.manga_parser import parse_manga
+from app.services import books_service, grammar_service, lookup_service, manga_ocr_service, manga_service, quiz_service
 from app.tokenizer import (
     chunk_into_bunsetsu,
     extract_particle_quiz,
     tokenize_chapter_html,
+    tokenize_plain_text,
 )
 
 # Minimal valid 1x1 transparent PNG
@@ -155,8 +159,11 @@ def temp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     _build_sample_epub(books_dir / "sample_vol1.epub", "サンプル小説 第一巻")
     _build_sample_epub(books_dir / "sample_vol2.epub", "サンプル小説 第二巻")
 
+    manga_dir = tmp_path / "manga"
+    manga_dir.mkdir()
     test_db = tmp_path / "test_app.db"
     monkeypatch.setattr(config, "BOOKS_DIR", books_dir)
+    monkeypatch.setattr(config, "MANGA_DIR", manga_dir)
     db.set_db_path(test_db)
     db.init_db()
     yield books_dir, test_db
@@ -1577,3 +1584,232 @@ def test_selection_lookup_custom_chat_and_exact_quiz_invariants(
         assert chat_thread["messages"][0]["content"] == "Why is には used?"
         assert "In concise English only" not in captured_prompts[-1]
         assert "Why is には used?" in captured_prompts[-1]
+
+
+def _make_solid_png_bytes(width: int, height: int, color: tuple[int, int, int] = (240, 240, 240)) -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _create_synthetic_manga_epub(epub_path: Path, title: str = "サンプル漫画 第一巻") -> Path:
+    """Create a synthetic RTL manga EPUB with SVG cover, regular page, and wide 2-page spread."""
+    epub_path.parent.mkdir(parents=True, exist_ok=True)
+    container_xml = """<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"""
+    content_opf = f"""<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>{title}</dc:title>
+    <dc:creator>テスト作家</dc:creator>
+    <dc:language>ja</dc:language>
+  </metadata>
+  <manifest>
+    <item id="p0" href="text/p0.xhtml" media-type="application/xhtml+xml"/>
+    <item id="p1" href="text/p1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="p2" href="text/p2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img0" href="images/cover.png" media-type="image/png"/>
+    <item id="img1" href="images/p1.png" media-type="image/png"/>
+    <item id="img2" href="images/spread.png" media-type="image/png"/>
+  </manifest>
+  <spine page-progression-direction="rtl">
+    <itemref idref="p0"/>
+    <itemref idref="p1"/>
+    <itemref idref="p2"/>
+  </spine>
+</package>"""
+    p0_xhtml = """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Cover</title></head>
+<body><div><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 800 1200">
+  <image width="800" height="1200" xlink:href="../images/cover.png"/>
+</svg></div></body></html>"""
+    p1_xhtml = """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><meta name="viewport" content="width=800, height=1200"/></head>
+<body><div class="calibre2"><img src="../images/p1.png" alt=""/></div></body></html>"""
+    p2_xhtml = """<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><meta name="viewport" content="width=1600, height=1200"/></head>
+<body><div class="calibre2"><img src="../images/spread.png" alt=""/></div></body></html>"""
+
+    with zipfile.ZipFile(epub_path, "w") as zf:
+        zf.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
+        zf.writestr("META-INF/container.xml", container_xml)
+        zf.writestr("OEBPS/content.opf", content_opf)
+        zf.writestr("OEBPS/text/p0.xhtml", p0_xhtml)
+        zf.writestr("OEBPS/text/p1.xhtml", p1_xhtml)
+        zf.writestr("OEBPS/text/p2.xhtml", p2_xhtml)
+        zf.writestr("OEBPS/images/cover.png", _make_solid_png_bytes(800, 1200, (220, 230, 245)))
+        zf.writestr("OEBPS/images/p1.png", _make_solid_png_bytes(800, 1200, (245, 240, 235)))
+        zf.writestr("OEBPS/images/spread.png", _make_solid_png_bytes(1600, 1200, (235, 245, 235)))
+    return epub_path
+
+
+def _create_synthetic_manga_cbz(cbz_path: Path) -> Path:
+    """Create a synthetic CBZ archive with out-of-order filenames to test natural sorting."""
+    cbz_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(cbz_path, "w") as zf:
+        zf.writestr("p10.png", _make_solid_png_bytes(700, 1000, (210, 210, 210)))
+        zf.writestr("p2.png", _make_solid_png_bytes(700, 1000, (225, 225, 225)))
+        zf.writestr("p1.png", _make_solid_png_bytes(700, 1000, (240, 240, 240)))
+    return cbz_path
+
+
+def test_manga_parser_routes_ocr_and_cross_scan_isolation(tmp_path: Path, monkeypatch):
+    """Verify EPUB/CBZ manga parsing, natural sorting, cross-scan safety, OCR caching, and context integration."""
+    books_dir = tmp_path / "books"
+    manga_dir = tmp_path / "manga"
+    nested_dir = manga_dir / "author_sub" / "vol_sub"
+    books_dir.mkdir(parents=True)
+    nested_dir.mkdir(parents=True)
+
+    _build_sample_epub(books_dir / "novel.epub", title="テスト小説")
+    manga_epub = _create_synthetic_manga_epub(nested_dir / "sample_manga.epub")
+    manga_cbz = _create_synthetic_manga_cbz(manga_dir / "sample_cbz.cbz")
+
+    # Direct parser checks
+    parsed_epub = parse_manga(manga_epub)
+    assert parsed_epub.title == "サンプル漫画 第一巻"
+    assert parsed_epub.page_progression == "rtl"
+    assert [(p.width, p.height, p.is_spread) for p in parsed_epub.pages] == [
+        (800, 1200, False),
+        (800, 1200, False),
+        (1600, 1200, True),
+    ]
+
+    parsed_cbz = parse_manga(manga_cbz)
+    assert [p.image_href for p in parsed_cbz.pages] == ["p1.png", "p2.png", "p10.png"]
+
+    # Tokenize plain Japanese sentence preserving exact concatenation
+    plain = "駅前には商店街がある！"
+    toks = tokenize_plain_text(plain)
+    assert "".join(t["surface"] for t in toks) == plain
+    assert any(t["lemma"] == "商店街" and t["clickable"] for t in toks)
+
+    test_db = tmp_path / "test_manga.db"
+    monkeypatch.setattr(config, "BOOKS_DIR", books_dir)
+    monkeypatch.setattr(config, "MANGA_DIR", manga_dir)
+    monkeypatch.setattr(config, "DB_PATH", test_db)
+    db.set_db_path(test_db)
+    db.init_db()
+
+    ocr_calls = 0
+
+    def fake_page_ocr(image_bytes: bytes, page_index: int) -> dict:
+        nonlocal ocr_calls
+        ocr_calls += 1
+        return {
+            "ocr_available": True,
+            "img_width": 800,
+            "img_height": 1200,
+            "engine": "mock-mokuro",
+            "blocks": [
+                {
+                    "block_id": f"p{page_index}_b0",
+                    "box": [100, 80, 320, 420],
+                    "box_pct": [12.5, 6.667, 27.5, 28.333],
+                    "vertical": True,
+                    "lines": ["今日は", "いい天気だね！"],
+                    "text": "今日はいい天気だね！",
+                    "tokens": tokenize_plain_text("今日はいい天気だね！"),
+                },
+                {
+                    "block_id": f"p{page_index}_b1",
+                    "box": [450, 200, 680, 500],
+                    "box_pct": [56.25, 16.667, 28.75, 25.0],
+                    "vertical": True,
+                    "lines": ["駅前の商店街へ行こう。"],
+                    "text": "駅前の商店街へ行こう。",
+                    "tokens": tokenize_plain_text("駅前の商店街へ行こう。"),
+                },
+            ],
+        }
+
+    def fake_crop_ocr(image_bytes: bytes, page_index: int, x: float, y: float, w: float, h: float) -> dict:
+        return {
+            "ocr_available": True,
+            "block_id": f"p{page_index}_crop",
+            "text": "不思議な風景",
+            "tokens": tokenize_plain_text("不思議な風景"),
+            "box_pct": [round(x * 100, 3), round(y * 100, 3), round(w * 100, 3), round(h * 100, 3)],
+        }
+
+    monkeypatch.setattr(manga_ocr_service, "run_page_ocr", fake_page_ocr)
+    monkeypatch.setattr(manga_ocr_service, "run_crop_ocr", fake_crop_ocr)
+    monkeypatch.setattr(manga_ocr_service, "is_ocr_available", lambda: True)
+
+    with TestClient(app) as client:
+        # Cross-scan isolation: scanning novels must keep manga; scanning manga must keep novels
+        assert len(books_service.scan_books_folder()) == 3
+        assert len(manga_service.scan_manga_folder()) == 2
+        assert len(books_service.scan_books_folder()) == 3
+        assert len(manga_service.scan_manga_folder()) == 2
+
+        all_books = client.get("/api/books").json()["books"]
+        novels = [b for b in all_books if b["media_type"] == "novel"]
+        mangas = [b for b in all_books if b["media_type"] == "manga"]
+        assert len(novels) == 1
+        assert len(mangas) == 2
+
+        epub_manga_item = next(m for m in mangas if m["title"] == "サンプル漫画 第一巻")
+        assert epub_manga_item["cover_url"] == f"/api/manga/{epub_manga_item['id']}/pages/0/image"
+        assert epub_manga_item["page_count"] == 3
+
+        manga_list_res = client.get("/api/manga")
+        assert manga_list_res.status_code == 200
+        assert manga_list_res.json()["ocr_available"] is True
+        assert len(manga_list_res.json()["manga"]) == 2
+
+        detail = client.get(f"/api/manga/{epub_manga_item['id']}").json()
+        assert detail["media_type"] == "manga"
+        assert len(detail["pages"]) == 3
+        assert detail["pages"][2]["is_spread"] is True
+        assert detail["pages"][2]["width"] == 1600
+        assert detail["pages"][2]["height"] == 1200
+
+        # Image streaming check
+        img_resp = client.get(f"/api/manga/{epub_manga_item['id']}/pages/2/image")
+        assert img_resp.status_code == 200
+        assert img_resp.headers["content-type"] == "image/png"
+        with Image.open(io.BytesIO(img_resp.content)) as im:
+            assert im.size == (1600, 1200)
+
+        # Page OCR call 1 runs OCR and caches in SQLite; call 2 serves from cache
+        ocr1 = client.post(f"/api/manga/{epub_manga_item['id']}/pages/1/ocr", json={}).json()
+        assert ocr1["ocr_available"] is True
+        assert ocr1["cached"] is False
+        assert ocr_calls == 1
+        assert len(ocr1["blocks"]) == 2
+        assert ocr1["blocks"][1]["block_id"] == "p1_b1"
+
+        ocr2 = client.post(f"/api/manga/{epub_manga_item['id']}/pages/1/ocr", json={}).json()
+        assert ocr2["cached"] is True
+        assert ocr_calls == 1
+
+        # Crop OCR + tokenize endpoint
+        crop_res = client.post(
+            f"/api/manga/{epub_manga_item['id']}/pages/1/ocr-crop",
+            json={"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.25},
+        ).json()
+        assert crop_res["text"] == "不思議な風景"
+        assert any(t["lemma"] == "風景" for t in crop_res["tokens"])
+
+        tok_res = client.post("/api/manga/tokenize", json={"text": "静かな朝"}).json()
+        assert "".join(t["surface"] for t in tok_res["tokens"]) == "静かな朝"
+
+        # Grammar & quiz context fallbacks read cached manga_pages OCR blocks
+        target_sent, surrounding = grammar_service._load_sentence_context(
+            epub_manga_item["id"], 1, "p1_b1"
+        )
+        assert target_sent == "駅前の商店街へ行こう。"
+        assert "今日はいい天気だね！" in surrounding
+
+        manga_sents = quiz_service._load_chapter_sentences(epub_manga_item["id"], 1)
+        assert [s["text"] for s in manga_sents] == [
+            "今日はいい天気だね！",
+            "駅前の商店街へ行こう。",
+        ]
+    db.set_db_path(None)
+

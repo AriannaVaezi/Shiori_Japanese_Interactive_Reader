@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 BOOKS_DIR = ROOT_DIR / "books"
+MANGA_DIR = ROOT_DIR / "manga"
 DATA_DIR = ROOT_DIR / "data"
 DB_PATH = DATA_DIR / "app.db"
 JAMDICT_DB_PATH = DATA_DIR / "jamdict.db"
@@ -29,6 +30,9 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "theme": "paper",
     "font_size": "20",
     "quiz_timer_minutes": "15",
+    "manga_layout": "spread",
+    "manga_spread_offset": "1",
+    "manga_ocr_overlay": "hover",
 }
 
 ALLOWED_SETTING_KEYS = set(DEFAULT_SETTINGS.keys())

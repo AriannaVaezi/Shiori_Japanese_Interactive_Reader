@@ -9,14 +9,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import config, db, llamacpp_manager
-from app.routes import books, grammar, lookup, notes, quiz, settings
-from app.services import books_service
+from app.routes import books, grammar, lookup, manga, notes, quiz, settings
+from app.services import books_service, manga_service
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     db.init_db()
     books_service.scan_books_folder()
+    manga_service.scan_manga_folder()
     try:
         yield
     finally:
@@ -26,6 +27,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="Japanese Interactive EPUB Reader", lifespan=lifespan)
 
 app.include_router(books.router)
+app.include_router(manga.router)
 app.include_router(lookup.router)
 app.include_router(grammar.router)
 app.include_router(notes.router)

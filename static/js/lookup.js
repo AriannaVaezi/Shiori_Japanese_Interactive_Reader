@@ -173,7 +173,7 @@ function renderENResult(data, anchorRect) {
 
 function markChapterTokensTrouble(lemma, reading, sticky = false) {
   if (!lemma) return;
-  document.querySelectorAll("#reader-content .tok").forEach((el) => {
+  document.querySelectorAll("#reader-content .tok, #manga-text-tokens .tok").forEach((el) => {
     if (el.dataset.lemma === lemma && (!reading || el.dataset.reading === reading)) {
       el.classList.add("trouble-word");
       if (sticky) el.classList.add("sticky-word");

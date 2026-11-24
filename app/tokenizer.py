@@ -128,6 +128,69 @@ def find_exact_word_span(sentence: str, lemma: str) -> tuple[int, int, str] | No
     return None
 
 
+def tokenize_plain_text(text: str) -> list[dict]:
+    """Tokenize plain Japanese text (e.g. manga OCR bubbles) into clickable SudachiPy token dicts."""
+    raw = text or ""
+    if not raw:
+        return []
+
+    tokenizer = _get_tokenizer()
+    morphemes = list(tokenizer.tokenize(raw))
+    tokens: list[dict] = []
+    cursor = 0
+
+    for m in morphemes:
+        m_start = m.begin()
+        m_end = m.end()
+        if m_start > cursor:
+            gap = raw[cursor:m_start]
+            tokens.append(
+                {
+                    "surface": gap,
+                    "lemma": "",
+                    "norm": "",
+                    "reading": "",
+                    "pos": "空白",
+                    "clickable": False,
+                }
+            )
+        surface = m.surface()
+        pos0 = m.part_of_speech()[0]
+        is_clickable = pos0 not in _SKIP_POS and bool(surface.strip())
+        lemma = m.dictionary_form()
+        norm = m.normalized_form()
+        reading = (
+            _lemma_reading_hiragana(tokenizer, lemma, m.reading_form())
+            if is_clickable
+            else ""
+        )
+        tokens.append(
+            {
+                "surface": surface,
+                "lemma": lemma,
+                "norm": norm,
+                "reading": reading,
+                "pos": pos0,
+                "clickable": is_clickable,
+            }
+        )
+        cursor = m_end
+
+    if cursor < len(raw):
+        tail = raw[cursor:]
+        tokens.append(
+            {
+                "surface": tail,
+                "lemma": "",
+                "norm": "",
+                "reading": "",
+                "pos": "空白",
+                "clickable": False,
+            }
+        )
+    return tokens
+
+
 def _extract_ruby_element(
     ruby_tag: Tag,
     chars: list[str],

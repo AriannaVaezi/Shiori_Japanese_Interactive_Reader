@@ -39,6 +39,33 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  listManga() {
+    return request("/api/manga");
+  },
+  scanManga() {
+    return request("/api/manga/scan", { method: "POST" });
+  },
+  getManga(bookId) {
+    return request(`/api/manga/${bookId}`);
+  },
+  ocrMangaPage(bookId, pageIndex, force = false) {
+    return request(`/api/manga/${bookId}/pages/${pageIndex}/ocr`, {
+      method: "POST",
+      body: JSON.stringify({ force: Boolean(force) }),
+    });
+  },
+  ocrMangaCrop(bookId, pageIndex, coords) {
+    return request(`/api/manga/${bookId}/pages/${pageIndex}/ocr-crop`, {
+      method: "POST",
+      body: JSON.stringify(coords),
+    });
+  },
+  tokenizeMangaText(text) {
+    return request("/api/manga/tokenize", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+  },
   lookupJJ(payload) {
     return request("/api/lookup/jj", {
       method: "POST",

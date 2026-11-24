@@ -27,29 +27,62 @@ def _load_sentence_context(
     sent_id: str,
     fallback_sentence: str = "",
 ) -> tuple[str, str]:
-    """Return (target_sentence, surrounding_context_text) from chapters.sentences_json."""
+    """Return (target_sentence, surrounding_context_text) from chapters or manga_pages."""
     with db.get_conn() as conn:
         row = conn.execute(
             "SELECT sentences_json FROM chapters WHERE book_id = ? AND chapter_index = ?",
             (book_id, chapter_index),
         ).fetchone()
+        manga_row = None
+        if row is None:
+            manga_row = conn.execute(
+                "SELECT ocr_json FROM manga_pages WHERE book_id = ? AND page_index = ?",
+                (book_id, chapter_index),
+            ).fetchone()
 
-    if not row or not row["sentences_json"]:
-        return fallback_sentence, fallback_sentence
+    if row and row["sentences_json"]:
+        sentences: list[dict[str, str]] = json.loads(row["sentences_json"])
+        idx = next((i for i, s in enumerate(sentences) if s.get("sent_id") == sent_id), None)
+        if idx is None:
+            return fallback_sentence, fallback_sentence
 
-    sentences: list[dict[str, str]] = json.loads(row["sentences_json"])
-    idx = next((i for i, s in enumerate(sentences) if s.get("sent_id") == sent_id), None)
-    if idx is None:
-        return fallback_sentence, fallback_sentence
+        target = sentences[idx]["text"]
+        start = max(0, idx - 2)
+        end = min(len(sentences), idx + 2)
+        ctx_lines = []
+        for i in range(start, end):
+            prefix = ">>> " if i == idx else "    "
+            ctx_lines.append(f"{prefix}{sentences[i]['text']}")
+        return target, "\n".join(ctx_lines)
 
-    target = sentences[idx]["text"]
-    start = max(0, idx - 2)
-    end = min(len(sentences), idx + 2)
-    ctx_lines = []
-    for i in range(start, end):
-        prefix = ">>> " if i == idx else "    "
-        ctx_lines.append(f"{prefix}{sentences[i]['text']}")
-    return target, "\n".join(ctx_lines)
+    if manga_row and manga_row["ocr_json"]:
+        try:
+            ocr_data = json.loads(manga_row["ocr_json"])
+        except Exception:
+            return fallback_sentence, fallback_sentence
+        blocks = [b for b in (ocr_data.get("blocks") or []) if (b.get("text") or "").strip()]
+        if not blocks:
+            return fallback_sentence, fallback_sentence
+
+        idx = next((i for i, b in enumerate(blocks) if b.get("block_id") == sent_id), None)
+        if idx is not None:
+            target = blocks[idx]["text"]
+            start = max(0, idx - 3)
+            end = min(len(blocks), idx + 3)
+            ctx_lines = [
+                f"{'>>> ' if i == idx else '    '}{blocks[i]['text']}"
+                for i in range(start, end)
+            ]
+            return target, "\n".join(ctx_lines)
+
+        # Manual crop or edited text on the same manga page: include page bubbles as context
+        target = fallback_sentence.strip()
+        ctx_lines = [f"    {b['text']}" for b in blocks[:8]]
+        if target:
+            ctx_lines.append(f">>> {target}")
+        return target, "\n".join(ctx_lines) if ctx_lines else target
+
+    return fallback_sentence, fallback_sentence
 
 
 def _row_to_thread(row: Any) -> dict[str, Any]:

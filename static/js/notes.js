@@ -6,6 +6,7 @@ import { state } from "./state.js";
 const modal = document.getElementById("notes-modal");
 const btnClose = document.getElementById("btn-close-notes");
 const badgeEl = document.getElementById("notes-count-badge");
+const mangaBadgeEl = document.getElementById("manga-notes-count-badge");
 
 const tabChapter = document.getElementById("tab-notes-chapter");
 const tabBook = document.getElementById("tab-notes-book");
@@ -76,6 +77,7 @@ export async function refreshNotesBadge() {
   const chapterIndex = state.currentChapter?.chapter_index ?? null;
   if (bookId == null || chapterIndex == null) {
     badgeEl.hidden = true;
+    if (mangaBadgeEl) mangaBadgeEl.hidden = true;
     return;
   }
   try {
@@ -83,6 +85,10 @@ export async function refreshNotesBadge() {
     const count = (res.notes || []).length;
     badgeEl.textContent = String(count);
     badgeEl.hidden = count === 0;
+    if (mangaBadgeEl) {
+      mangaBadgeEl.textContent = String(count);
+      mangaBadgeEl.hidden = count === 0;
+    }
   } catch {
     // ignore transient count error
   }

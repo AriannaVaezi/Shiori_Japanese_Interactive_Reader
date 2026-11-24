@@ -25,7 +25,7 @@ def scan_books_folder(books_dir: Path | None = None) -> list[dict[str, Any]]:
 
     with db.get_conn() as conn:
         existing_rows = conn.execute(
-            "SELECT id, file_path, file_hash FROM books"
+            "SELECT id, file_path, file_hash FROM books WHERE media_type = 'novel'"
         ).fetchall()
         existing_by_path = {row["file_path"]: row for row in existing_rows}
 
@@ -66,8 +66,8 @@ def scan_books_folder(books_dir: Path | None = None) -> list[dict[str, Any]]:
             else:
                 cur = conn.execute(
                     """
-                    INSERT INTO books (file_path, file_hash, title, author, cover_href, chapter_count, added_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO books (file_path, file_hash, title, author, cover_href, chapter_count, media_type, added_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 'novel', ?)
                     """,
                     (
                         parsed.file_path,
@@ -108,17 +108,22 @@ def scan_books_folder(books_dir: Path | None = None) -> list[dict[str, Any]]:
     return list_books()
 
 
-def list_books() -> list[dict[str, Any]]:
-    """Return all books with reading progress and chapter summary."""
+def list_books(media_type: str | None = None) -> list[dict[str, Any]]:
+    """Return all books (or filtered by media_type) with reading progress and chapter summary."""
+    where_sql = "WHERE b.media_type = ?" if media_type else ""
+    params: tuple[Any, ...] = (media_type,) if media_type else ()
+
     with db.get_conn() as conn:
         book_rows = conn.execute(
-            """
+            f"""
             SELECT b.*, rp.chapter_index AS prog_chapter, rp.scroll_ratio,
                    rp.last_sent_id, rp.reading_seconds, rp.updated_at AS prog_updated_at
             FROM books b
             LEFT JOIN reading_progress rp ON rp.book_id = b.id
+            {where_sql}
             ORDER BY b.title COLLATE NOCASE ASC
-            """
+            """,
+            params,
         ).fetchall()
 
         chapters_rows = conn.execute(
@@ -134,17 +139,27 @@ def list_books() -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for row in book_rows:
         book_id = row["id"]
-        cover_url = (
-            f"/api/books/{book_id}/assets/{row['cover_href']}"
-            if row["cover_href"]
-            else None
-        )
+        row_media_type = row["media_type"] or "novel"
+        if row_media_type == "manga":
+            cover_url = (
+                f"/api/manga/{book_id}/pages/0/image"
+                if (row["chapter_count"] or 0) > 0
+                else None
+            )
+        else:
+            cover_url = (
+                f"/api/books/{book_id}/assets/{row['cover_href']}"
+                if row["cover_href"]
+                else None
+            )
         result.append(
             {
                 "id": book_id,
                 "title": row["title"],
                 "author": row["author"],
+                "media_type": row_media_type,
                 "chapter_count": row["chapter_count"],
+                "page_count": row["chapter_count"],
                 "cover_url": cover_url,
                 "added_at": row["added_at"],
                 "progress": {

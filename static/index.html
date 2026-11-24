@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>栞 Shiori — Japanese Interactive EPUB Reader</title>
+  <title>栞 Shiori — Japanese Interactive EPUB &amp; Manga Reader</title>
   <link rel="stylesheet" href="/static/css/app.css" />
 </head>
 <body>
@@ -14,22 +14,27 @@
         <span class="brand-mark">栞</span>
         <div>
           <h1>Shiori Reader</h1>
-          <p class="subtitle">Japanese-first EPUB reading &amp; grammar companion</p>
+          <p class="subtitle">Japanese-first EPUB &amp; Manga reading &amp; grammar companion</p>
         </div>
       </div>
       <div class="topbar-actions">
         <button id="btn-open-notes-lib" class="btn btn-secondary" type="button">栞 Notes</button>
-        <button id="btn-rescan" class="btn btn-secondary" type="button">Rescan books/</button>
+        <button id="btn-rescan" class="btn btn-secondary" type="button">Rescan Library</button>
         <button id="btn-open-settings-lib" class="btn btn-secondary" type="button">Settings</button>
       </div>
     </header>
 
     <main class="library-main">
+      <div class="library-filter-tabs" role="tablist" aria-label="Library media filter">
+        <button id="lib-filter-all" class="btn btn-pill lib-filter-tab active" type="button" data-filter="all">All</button>
+        <button id="lib-filter-novel" class="btn btn-pill lib-filter-tab" type="button" data-filter="novel">Novels</button>
+        <button id="lib-filter-manga" class="btn btn-pill lib-filter-tab" type="button" data-filter="manga">Manga</button>
+      </div>
       <div id="library-status" class="status-banner" hidden></div>
       <div id="books-grid" class="books-grid"></div>
       <div id="library-empty" class="empty-state" hidden>
-        <h2>No EPUB books found</h2>
-        <p>Place <code>.epub</code> files inside the <code>books/</code> folder and click <strong>Rescan books/</strong>.</p>
+        <h2>No items found</h2>
+        <p>Place novel <code>.epub</code> files in <code>books/</code> or manga <code>.epub</code> / <code>.cbz</code> files in <code>manga/</code> and click <strong>Rescan Library</strong>.</p>
       </div>
     </main>
   </div>
@@ -142,6 +147,72 @@
           <div id="grammar-notes-list" class="grammar-notes-list"></div>
         </div>
       </aside>
+    </div>
+  </div>
+
+  <!-- Manga Reader View -->
+  <div id="manga-view" class="view manga-view" hidden>
+    <div id="manga-fs-hover-zone" class="manga-fs-hover-zone" aria-hidden="true"></div>
+    <header id="manga-bar" class="reader-bar manga-bar">
+      <div class="reader-bar-left">
+        <button id="btn-manga-back" class="btn btn-ghost" type="button" title="Back to Library">← Library</button>
+        <span id="manga-book-title" class="reader-book-title"></span>
+      </div>
+
+      <div class="reader-bar-center">
+        <button id="btn-manga-next" class="btn btn-icon" type="button" title="Next page (← or Space)">‹</button>
+        <div class="manga-page-jump">
+          <input id="manga-page-input" type="number" min="1" value="1" aria-label="Page number" />
+          <span id="manga-page-total">/ 0</span>
+        </div>
+        <button id="btn-manga-prev" class="btn btn-icon" type="button" title="Previous page (→)">›</button>
+      </div>
+
+      <div class="reader-bar-right">
+        <button id="btn-manga-layout" class="btn btn-pill" type="button" title="Toggle 2-Page Spread / 1-Page Vertical (V)">2-Page Spread</button>
+        <button id="btn-manga-offset" class="btn btn-pill" type="button" title="Toggle Cover Solo / Paired (S)">Cover: Solo</button>
+        <button id="btn-manga-ocr-mode" class="btn btn-pill" type="button" title="Cycle speech bubble highlight mode">OCR: Hover</button>
+        <button id="btn-manga-scan-ocr" class="btn btn-pill" type="button" title="Run / refresh OCR on visible page(s)">Scan Page OCR</button>
+        <button id="btn-manga-crop" class="btn btn-pill" type="button" title="Drag on a page to OCR any region (or hold Shift + Drag anytime) (C)">✂ Select Area</button>
+        <button id="btn-manga-trouble" class="btn btn-pill" type="button" title="Trouble Radar">
+          Radar <span id="manga-trouble-count-badge" class="badge" hidden>0</span>
+        </button>
+        <button id="btn-manga-notes" class="btn btn-pill" type="button" title="Saved Quotes &amp; Notes">
+          栞 Notes <span id="manga-notes-count-badge" class="badge" hidden>0</span>
+        </button>
+        <button id="btn-manga-grammar" class="btn btn-pill" type="button" title="Open Grammar / Chat Drawer">
+          文法 / Chat <span id="manga-grammar-count-badge" class="badge" hidden>0</span>
+        </button>
+        <button id="btn-manga-settings" class="btn btn-icon" type="button" title="Settings">⚙</button>
+        <button id="btn-manga-fullscreen" class="btn btn-pill" type="button" title="Toggle Fullscreen (F)">⛶ Fullscreen</button>
+      </div>
+    </header>
+
+    <div id="manga-workspace" class="reader-workspace manga-workspace">
+      <div id="manga-viewport" class="manga-viewport">
+        <div id="manga-stage" class="manga-stage"></div>
+        <div id="manga-ocr-status" class="manga-ocr-status" hidden></div>
+        <button id="btn-manga-exit-fs" class="manga-fs-exit-btn" type="button" hidden>✕ Exit Fullscreen (F)</button>
+      </div>
+    </div>
+
+    <div id="manga-text-bar" class="manga-text-bar" hidden>
+      <div class="manga-text-bar-head">
+        <span id="manga-text-source" class="pos-badge">Page 1</span>
+        <span class="hint-text">Click a word to look up, or drag-select text for phrase tools</span>
+        <div class="manga-text-bar-actions">
+          <button id="btn-manga-bar-chat" class="btn btn-pill" type="button" title="Ask a custom question without default prompt">Chat</button>
+          <button id="btn-manga-bar-grammar" class="btn btn-pill" type="button" title="Break down grammar in English">? Grammar</button>
+          <button id="btn-manga-bar-save" class="btn btn-pill" type="button" title="Save quote / note">★ Save</button>
+          <button id="btn-manga-bar-edit" class="btn btn-pill" type="button" title="Fix OCR text">✎ Edit</button>
+          <button id="btn-manga-bar-close" class="btn btn-icon-sm" type="button" title="Close (Esc)">×</button>
+        </div>
+      </div>
+      <div id="manga-text-tokens" class="manga-text-tokens sent" data-sent-id=""></div>
+      <div id="manga-text-edit-wrap" class="manga-text-edit-wrap" hidden>
+        <input id="manga-text-edit-input" type="text" placeholder="Edit recognized Japanese text…" />
+        <button id="btn-manga-edit-apply" class="btn btn-primary" type="button">Apply</button>
+      </div>
     </div>
   </div>
 

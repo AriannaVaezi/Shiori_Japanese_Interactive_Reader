@@ -7,6 +7,7 @@ const drawer = document.getElementById("grammar-drawer");
 const btnToggle = document.getElementById("btn-toggle-grammar");
 const btnClose = document.getElementById("btn-close-grammar");
 const countBadge = document.getElementById("grammar-count-badge");
+const mangaCountBadge = document.getElementById("manga-grammar-count-badge");
 const drawerNotesCount = document.getElementById("drawer-notes-count");
 
 const tabCurrent = document.getElementById("tab-grammar-current");
@@ -41,9 +42,16 @@ function updateCountsAndSentenceMarks() {
   drawerNotesCount.textContent = String(count);
   countBadge.textContent = String(count);
   countBadge.hidden = count === 0;
+  if (mangaCountBadge) {
+    mangaCountBadge.textContent = String(count);
+    mangaCountBadge.hidden = count === 0;
+  }
 
   const activeSentIds = new Set(state.grammarThreads.map((t) => t.sent_id));
   document.querySelectorAll(".sent").forEach((el) => {
+    el.classList.toggle("has-grammar", activeSentIds.has(el.dataset.sentId));
+  });
+  document.querySelectorAll(".manga-ocr-box").forEach((el) => {
     el.classList.toggle("has-grammar", activeSentIds.has(el.dataset.sentId));
   });
 }
@@ -304,14 +312,22 @@ export async function openGrammarForSentence({
   await submitQuestion("");
 }
 
+export function dockGrammarDrawer(workspaceEl) {
+  if (workspaceEl && drawer && drawer.parentElement !== workspaceEl) {
+    workspaceEl.appendChild(drawer);
+  }
+}
+
+export function toggleGrammarDrawer() {
+  drawer.hidden = !drawer.hidden;
+}
+
 export function closeGrammarDrawer() {
   drawer.hidden = true;
 }
 
 export function initGrammar() {
-  btnToggle.addEventListener("click", () => {
-    drawer.hidden = !drawer.hidden;
-  });
+  btnToggle.addEventListener("click", toggleGrammarDrawer);
   btnClose.addEventListener("click", closeGrammarDrawer);
   tabCurrent.addEventListener("click", () => switchTab("current"));
   tabNotes.addEventListener("click", () => {
