@@ -79,6 +79,55 @@ def _lemma_reading_hiragana(tokenizer: sudachipy.Tokenizer, lemma: str, fallback
     return katakana_to_hiragana(joined)
 
 
+def text_to_hiragana_reading(text: str) -> str:
+    """Return a hiragana reading for an arbitrary selected Japanese span."""
+    clean = (text or "").strip()
+    if not clean:
+        return ""
+    return _lemma_reading_hiragana(_get_tokenizer(), clean, clean)
+
+
+def lemmatize_single_word(text: str) -> str | None:
+    """Return the dictionary lemma if `text` is a single inflected word."""
+    clean = (text or "").strip()
+    if not clean:
+        return None
+    morphemes = list(_get_tokenizer().tokenize(clean))
+    if not morphemes:
+        return None
+    if len(morphemes) == 1:
+        dict_form = morphemes[0].dictionary_form()
+        return dict_form if dict_form and dict_form != clean else None
+    if morphemes[0].part_of_speech()[0] in {"動詞", "形容詞"} and all(
+        m.part_of_speech()[0] in {"助動詞", "助詞"} for m in morphemes[1:]
+    ):
+        dict_form = morphemes[0].dictionary_form()
+        return dict_form if dict_form and dict_form != clean else None
+    return None
+
+
+def find_exact_word_span(sentence: str, lemma: str) -> tuple[int, int, str] | None:
+    """Locate an exact standalone whole-token occurrence of `lemma` inside `sentence`."""
+    clean = (sentence or "").strip()
+    target = (lemma or "").strip()
+    if not clean or not target:
+        return None
+
+    morphemes = list(_get_tokenizer().tokenize(clean))
+    for idx, m in enumerate(morphemes):
+        surf = m.surface()
+        pos0 = m.part_of_speech()[0]
+        if surf != target or m.dictionary_form() != target or pos0 not in _CONTENT_POS:
+            continue
+        if clean[m.begin() : m.end()] != target:
+            continue
+        if pos0 in {"動詞", "形容詞"} and idx + 1 < len(morphemes):
+            if morphemes[idx + 1].part_of_speech()[0] == "助動詞":
+                continue
+        return m.begin(), m.end(), surf
+    return None
+
+
 def _extract_ruby_element(
     ruby_tag: Tag,
     chars: list[str],
@@ -506,12 +555,16 @@ def extract_particle_quiz(sentence: str) -> dict | None:
     tail_stripped_len = len(clean.rstrip("。！？!?」』）)”’"))
 
     candidates = []
-    for m in morphemes:
+    for idx, m in enumerate(morphemes):
         pos = m.part_of_speech()
         surf = m.surface()
         if pos[0] != "助詞" or surf not in _TARGET_PARTICLES:
             continue
         if pos[1] not in {"格助詞", "係助詞", "副助詞"}:
+            continue
+        if (idx > 0 and morphemes[idx - 1].part_of_speech()[0] == "助詞") or (
+            idx + 1 < len(morphemes) and morphemes[idx + 1].part_of_speech()[0] == "助詞"
+        ):
             continue
         if surf == "の" and m.end() >= tail_stripped_len:
             continue
@@ -524,6 +577,8 @@ def extract_particle_quiz(sentence: str) -> dict | None:
     chosen = min(candidates, key=lambda m: abs(((m.begin() + m.end()) / 2.0) - center))
     particle = chosen.surface()
     blanked = f"{clean[:chosen.begin()]}＿＿{clean[chosen.end():]}"
+    if blanked.replace("＿＿", particle, 1) != clean:
+        return None
 
     group = next((g for g in _PARTICLE_GROUPS if particle in g), ["は", "が", "を", "に"])
     choices = list(dict.fromkeys([particle] + [p for p in group if p != particle]))

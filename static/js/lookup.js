@@ -203,6 +203,10 @@ async function fetchJJ(forceRegenerate = false) {
       force_regenerate: forceRegenerate,
     });
     if (nonce !== lookupNonce || !currentLookup) return;
+    if (!currentLookup.reading && data.reading) {
+      currentLookup.reading = data.reading;
+      readingEl.textContent = data.reading !== data.lemma ? `（${data.reading}）` : "";
+    }
     renderJJResult(data, currentLookup.anchorRect);
     if (!data.llm_unavailable) {
       markChapterTokensTrouble(currentLookup.lemma, currentLookup.reading, false);
@@ -257,6 +261,38 @@ export async function openWordLookup(tokenEl) {
   posEl.hidden = !pos;
 
   // Reset Step 2 (English remains hidden until explicitly requested)
+  btnRevealEn.hidden = false;
+  btnRevealEn.disabled = false;
+  btnRevealEn.textContent = "英語を見る / Show English";
+  enResults.hidden = true;
+  enResults.replaceChildren();
+
+  await fetchJJ(false);
+}
+
+export async function openSelectionLookup({ text, sentId = null, sentenceText = "", anchorRect }) {
+  const cleanText = (text || "").trim();
+  if (!cleanText) return;
+  clearActiveToken();
+
+  currentLookup = {
+    lemma: cleanText,
+    normForm: cleanText,
+    surface: cleanText,
+    reading: "",
+    pos: "",
+    sentId,
+    sentenceText,
+    bookId: state.currentBook?.id ?? null,
+    chapterIndex: state.currentChapter?.chapter_index ?? null,
+    anchorRect,
+  };
+
+  lemmaEl.textContent = cleanText;
+  readingEl.textContent = "";
+  surfaceNoteEl.hidden = true;
+  posEl.hidden = true;
+
   btnRevealEn.hidden = false;
   btnRevealEn.disabled = false;
   btnRevealEn.textContent = "英語を見る / Show English";
@@ -327,6 +363,7 @@ export function initLookup({ onAskGrammar, onSaveNote, onLookupLogged }) {
     if (popover.hidden) return;
     if (popover.contains(e.target)) return;
     if (e.target.closest?.(".tok")) return;
+    if (e.target.closest?.("#selection-tooltip")) return;
     closeLookup();
   });
 }

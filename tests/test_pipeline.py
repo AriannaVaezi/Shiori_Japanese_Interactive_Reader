@@ -750,7 +750,35 @@ def test_non_cloze_vocab_question_builders(temp_env):
         {"lemma": "秘密", "surface": "秘密", "reading": "ひみつ", "pos": "名詞", "sent_id": "s3", "sentence_text": "小さな秘密。"},
     ]
 
-    # 1. Reading distractors & Reading Recall (no furigana leaked)
+    # Poison dict_cache with bogus LLM output — quizzes MUST ignore LLM jj_json/examples
+    with db.get_conn() as conn:
+        for w, r in (
+            ("風景", "ふうけい"),
+            ("記憶", "きおく"),
+            ("勇気", "ゆうき"),
+            ("秘密", "ひみつ"),
+            ("商店街", "しょうてんがい"),
+        ):
+            conn.execute(
+                """
+                INSERT INTO dict_cache (lemma, reading, jj_json, provider, model, updated_at)
+                VALUES (?, ?, ?, 'ollama', 'm', '2026-11-22T00:00:00+00:00')
+                ON CONFLICT(lemma, reading) DO UPDATE SET jj_json = excluded.jj_json
+                """,
+                (
+                    w,
+                    r,
+                    json.dumps(
+                        {
+                            "simple_definition": f"POISONED LLM DEF {w}",
+                            "examples": [{"jp": f"FAKE LLM SENTENCE {w}", "reading": ""}],
+                        },
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+
+    # 1. Reading distractors & Reading Recall (strictly JMdict-verified, no valid readings leaked)
     dists = quiz_service._generate_reading_distractors("しょうてんがい", vocab_pool)
     assert len(dists) == 3
     assert len(set(dists)) == 3
@@ -769,8 +797,10 @@ def test_non_cloze_vocab_question_builders(temp_env):
     assert "<rt>" not in rq["prompt_word"]
     assert len(set(rq["choices"])) == 4
     assert rq["correct_answer"] == "しょうてんがい"
+    assert "POISONED LLM DEF" not in rq["hint"]
+    assert "POISONED LLM DEF" not in rq["explanation"]
 
-    # 2. Meaning Match (offline JMdict English path)
+    # 2. Meaning Match (strictly offline JMdict dictionary meaning, ignores LLM jj_json)
     mq_en = quiz_service._build_meaning_match_question(
         q_idx=1,
         lemma="風景",
@@ -782,38 +812,12 @@ def test_non_cloze_vocab_question_builders(temp_env):
     assert mq_en["kind"] == "meaning_match"
     assert len(set(mq_en["choices"])) == 4
     assert mq_en["correct_answer"] in mq_en["choices"]
+    assert "scenery" in mq_en["correct_answer"].lower()
+    assert all("POISONED LLM DEF" not in c for c in mq_en["choices"])
 
-    # 3. Meaning Match (pure J-J cached path when >= 4 words cached)
-    with db.get_conn() as conn:
-        for w, r, d in (
-            ("風景", "ふうけい", "目に見える景色やながめ。"),
-            ("記憶", "きおく", "前のことを覚えておくこと。"),
-            ("勇気", "ゆうき", "こわがらずに立ち向かう強い気持ち。"),
-            ("秘密", "ひみつ", "ほかの人に知らせないこと。"),
-        ):
-            conn.execute(
-                """
-                INSERT INTO dict_cache (lemma, reading, jj_json, provider, model, updated_at)
-                VALUES (?, ?, ?, 'ollama', 'm', '2026-11-22T00:00:00+00:00')
-                ON CONFLICT(lemma, reading) DO UPDATE SET jj_json = excluded.jj_json
-                """,
-                (w, r, json.dumps({"simple_definition": d}, ensure_ascii=False)),
-            )
-
-    mq_jj = quiz_service._build_meaning_match_question(
-        q_idx=2,
-        lemma="風景",
-        reading="ふうけい",
-        vocab_pool=vocab_pool,
-        trouble_item_id=None,
-    )
-    assert mq_jj is not None
-    assert mq_jj["correct_answer"] == "目に見える景色やながめ。"
-    assert all(not c.isascii() for c in mq_jj["choices"])
-
-    # 4. Reverse Definition -> Word
+    # 3. Reverse Dictionary Definition -> Word (strictly JMdict)
     dq = quiz_service._build_def_to_word_question(
-        q_idx=3,
+        q_idx=2,
         lemma="記憶",
         reading="きおく",
         vocab_pool=vocab_pool,
@@ -821,11 +825,43 @@ def test_non_cloze_vocab_question_builders(temp_env):
     )
     assert dq is not None
     assert dq["kind"] == "def_to_word"
-    assert dq["prompt_text"] == "前のことを覚えておくこと。"
+    assert "memory" in dq["prompt_text"].lower()
+    assert "POISONED LLM DEF" not in dq["prompt_text"]
     assert len(set(dq["choices"])) == 4
     assert dq["correct_answer"] == "記憶"
 
-    # 5. 4-Pair Match-Up + multi-item trouble credit on submit
+    # 4. Cloze strictly uses real book text (never LLM jj_examples)
+    cq = quiz_service._build_cloze_question(
+        q_idx=3,
+        lemma="風景",
+        reading="ふうけい",
+        surface_candidates=["風景"],
+        preferred_sentence="窓から綺麗な風景が見える。",
+        sentences=[{"sent_id": "s0", "text": "窓から綺麗な風景が見える。"}],
+        vocab_pool=vocab_pool,
+        trouble_item_id=None,
+    )
+    assert cq is not None
+    assert cq["full_sentence"] == "窓から綺麗な風景が見える。"
+    assert "FAKE LLM SENTENCE" not in cq["full_sentence"]
+    assert cq["blanked_sentence"].replace("＿＿＿", cq["correct_answer"], 1) == cq["full_sentence"]
+
+    # 5. Sentence output hints strictly use JMdict + book text
+    sq = quiz_service._build_sentence_output_question(
+        q_idx=4,
+        target_word="風景",
+        reading="ふうけい",
+        item_type="word",
+        trouble_item_id=None,
+        sent_text="窓から綺麗な風景が見える。",
+    )
+    assert sq is not None
+    assert "scenery" in sq["meaning_hint"].lower()
+    assert sq["example_hint"] == "窓から綺麗な風景が見える。"
+    assert "POISONED" not in sq["explanation"]
+    assert "FAKE LLM SENTENCE" not in sq["example_hint"]
+
+    # 6. 4-Pair Match-Up (JMdict meanings only) + multi-item trouble credit on submit
     with db.get_conn() as conn:
         t1 = int(
             conn.execute(
@@ -847,7 +883,7 @@ def test_non_cloze_vocab_question_builders(temp_env):
         )
 
     mp = quiz_service._build_match_pairs_question(
-        q_idx=4,
+        q_idx=5,
         candidate_words=[
             {"lemma": "風景", "reading": "ふうけい", "trouble_item_id": t1},
             {"lemma": "記憶", "reading": "きおく", "trouble_item_id": t2},
@@ -858,6 +894,7 @@ def test_non_cloze_vocab_question_builders(temp_env):
     assert mp is not None
     assert mp["kind"] == "match_pairs"
     assert len(mp["pairs"]) == 4
+    assert all("POISONED LLM DEF" not in p["meaning"] for p in mp["pairs"])
     assert set(mp["trouble_item_ids"]) == {t1, t2}
 
     sub = quiz_service.submit_quiz(
@@ -866,7 +903,7 @@ def test_non_cloze_vocab_question_builders(temp_env):
         trigger_type="manual",
         results=[
             {
-                "question_id": "q_4",
+                "question_id": "q_5",
                 "kind": "match_pairs",
                 "trouble_item_id": None,
                 "trouble_item_ids": mp["trouble_item_ids"],
@@ -1371,3 +1408,172 @@ def test_jj_json_resilience_and_english_grammar_prompt(temp_env, monkeypatch: py
     assert "[Target Sentence]" in user_p
     assert "[Question]" in user_p
     assert "concise English" in user_p
+
+
+def test_selection_lookup_custom_chat_and_exact_quiz_invariants(
+    temp_env, monkeypatch: pytest.MonkeyPatch
+):
+    # 1) JMdict exact matching rejects mismatched readings/compounds and tracks all valid readings
+    bogus = dictionary.lookup_english_exact("魔導帽子", "あかり")
+    assert bogus["entries"] == []
+    assert bogus["all_valid_readings"] == []
+
+    ashita = dictionary.lookup_english_exact("明日")
+    assert "あした" in ashita["all_valid_readings"]
+    assert "あす" in ashita["all_valid_readings"]
+
+    # 2) typed_reading includes accepted_answers & distractors never include another valid reading
+    tq = quiz_service._build_typed_reading_question(
+        q_idx=0,
+        lemma="明日",
+        reading="あした",
+        vocab_pool=[],
+        trouble_item_id=None,
+    )
+    assert tq is not None
+    assert "あした" in tq["accepted_answers"]
+    assert "あす" in tq["accepted_answers"]
+    for alt in ashita["all_valid_readings"]:
+        if alt != "あした":
+            assert alt not in tq["choices"]
+
+    dists_ashita = quiz_service._generate_reading_distractors(
+        "あした", [], forbidden_readings=set(ashita["all_valid_readings"])
+    )
+    assert all(r not in dists_ashita for r in ashita["all_valid_readings"])
+
+    # Unverified reading/kanji returns None rather than guessing
+    assert (
+        quiz_service._build_reading_recall_question(
+            q_idx=0, lemma="魔導帽子", reading="まどうぼうし", vocab_pool=[], trouble_item_id=None
+        )
+        is None
+    )
+
+    # 3) Cloze never blanks a mid-word substring (e.g. 手 inside 相手) and restores exact text
+    assert (
+        quiz_service._build_cloze_question(
+            q_idx=0,
+            lemma="手",
+            reading="て",
+            surface_candidates=["手"],
+            preferred_sentence="相手の話をよく聞く。",
+            sentences=[{"sent_id": "s0", "text": "相手の話をよく聞く。"}],
+            vocab_pool=[],
+            trouble_item_id=None,
+        )
+        is None
+    )
+    real_cloze = quiz_service._build_cloze_question(
+        q_idx=0,
+        lemma="商店街",
+        reading="しょうてんがい",
+        surface_candidates=["商店街"],
+        preferred_sentence="駅前にはお店が立ち並ぶ商店街がある。",
+        sentences=[{"sent_id": "s0", "text": "駅前にはお店が立ち並ぶ商店街がある。"}],
+        vocab_pool=[],
+        trouble_item_id=None,
+    )
+    assert real_cloze is not None
+    assert (
+        real_cloze["blanked_sentence"].replace("＿＿＿", real_cloze["correct_answer"], 1)
+        == real_cloze["full_sentence"]
+    )
+
+    # 4) Particle Fix skips compound-particle halves (には) and restores exact text
+    pq = extract_particle_quiz("駅前にはお店がある。")
+    assert pq is not None
+    assert pq["correct"] == "が"
+    assert pq["blanked_sentence"].replace("＿＿", pq["correct"], 1) == pq["full_sentence"]
+
+    # 5) Scramble rejects lossy whitespace splits and reconstructs exact trimmed sentence
+    assert (
+        quiz_service._build_scramble_question(
+            q_idx=0,
+            sentence="ここ は 駅 です。",
+            target_display="",
+            trouble_item_id=None,
+        )
+        is None
+    )
+    scr = quiz_service._build_scramble_question(
+        q_idx=0,
+        sentence="駅前にはお店が立ち並ぶ商店街がある。",
+        target_display="",
+        trouble_item_id=None,
+    )
+    assert scr is not None
+    assert "".join(scr["correct_answer"]) == scr["full_sentence"] == "駅前にはお店が立ち並ぶ商店街がある。"
+
+    # 6) Selection Lookup (blank reading) & Custom Chat (explicit question without auto-prompt)
+    captured_prompts: list[str] = []
+
+    async def fake_generate(
+        *, settings, system_prompt, messages, expect_json=False, json_schema=None
+    ):
+        captured_prompts.append(messages[-1]["content"])
+        if expect_json:
+            return (
+                json.dumps(
+                    {
+                        "simple_definition": "美しい景色。",
+                        "part_of_speech": "名詞",
+                        "context_note": "",
+                        "examples": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                "llamacpp",
+                "qwen2.5-7b",
+            )
+        return "Custom answer about には.", "llamacpp", "qwen2.5-7b"
+
+    monkeypatch.setattr(llm, "generate_text", fake_generate)
+
+    with TestClient(app) as client:
+        sel_jj = client.post(
+            "/api/lookup/jj",
+            json={
+                "lemma": "風景",
+                "reading": "",
+                "surface": "風景",
+                "sentence_text": "窓から美しい風景が見えた。",
+            },
+        ).json()
+        assert sel_jj["llm_unavailable"] is False
+        assert sel_jj["reading"] == "ふうけい"
+
+        # Inflected selection EN lookup falls back cleanly to lemma
+        sel_en = client.post(
+            "/api/lookup/en",
+            json={"lemma": "見上げた", "surface": "見上げた", "reading": ""},
+        ).json()
+        assert sel_en["entries"]
+        assert any(
+            "look up" in g.lower()
+            for e in sel_en["entries"]
+            for s in e["senses"]
+            for g in s["glosses"]
+        )
+
+        books = client.get("/api/books").json()["books"]
+        book1 = books[0]
+        ch1_idx = next(c["chapter_index"] for c in book1["chapters"] if c["title"] == "１")
+        client.get(f"/api/books/{book1['id']}/chapters/{ch1_idx}")
+
+        chat_res = client.post(
+            "/api/grammar/ask",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": "selection",
+                "target_text": "には",
+                "sentence_text": "駅前にはお店がある。",
+                "question": "Why is には used?",
+            },
+        )
+        assert chat_res.status_code == 200
+        chat_thread = chat_res.json()["thread"]
+        assert chat_thread["messages"][0]["content"] == "Why is には used?"
+        assert "In concise English only" not in captured_prompts[-1]
+        assert "Why is には used?" in captured_prompts[-1]

@@ -14,6 +14,8 @@ from app.tokenizer import (
     chunk_into_bunsetsu,
     extract_chapter_vocab_pool,
     extract_particle_quiz,
+    find_exact_word_span,
+    katakana_to_hiragana,
 )
 
 _KANJI_RE = re.compile(r"[\u4e00-\u9fff]")
@@ -104,79 +106,67 @@ def _short_en_gloss(en_data: dict[str, Any] | None) -> str | None:
     return None
 
 
+def _gloss_terms(gloss_text: str) -> set[str]:
+    return {part.strip().lower() for part in (gloss_text or "").split(";") if part.strip()}
+
+
+def _glosses_overlap(
+    glosses_a: set[str],
+    glosses_b: set[str],
+    gloss_a: str,
+    gloss_b: str,
+) -> bool:
+    norm_a = (gloss_a or "").strip().lower()
+    norm_b = (gloss_b or "").strip().lower()
+    if norm_a and norm_b and norm_a == norm_b:
+        return True
+    terms_a = glosses_a | _gloss_terms(gloss_a)
+    terms_b = glosses_b | _gloss_terms(gloss_b)
+    return bool(terms_a & terms_b)
+
+
 def _get_word_meta(lemma: str, reading: str) -> dict[str, Any]:
-    """Fetch cached J-J definition/examples and concise offline JMdict gloss."""
-    jj_def: str | None = None
-    jj_examples: list[str] = []
-    en_gloss: str | None = None
-    explanation_parts: list[str] = []
-
-    with db.get_conn() as conn:
-        if reading:
-            row = conn.execute(
-                "SELECT jj_json, en_json FROM dict_cache WHERE lemma = ? AND reading = ?",
-                (lemma, reading),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT jj_json, en_json FROM dict_cache WHERE lemma = ? ORDER BY updated_at DESC LIMIT 1",
-                (lemma,),
-            ).fetchone()
-
-    if row and row["jj_json"]:
-        jj = json.loads(row["jj_json"])
-        if jj.get("simple_definition"):
-            jj_def = str(jj["simple_definition"]).strip()
-            explanation_parts.append(jj_def)
-        for ex in jj.get("examples") or []:
-            if isinstance(ex, dict) and ex.get("jp"):
-                jj_examples.append(str(ex["jp"]).strip())
-
-    en_data = json.loads(row["en_json"]) if (row and row["en_json"]) else None
-    if en_data is None:
-        en_data = dictionary.lookup_english(lemma=lemma, surface=lemma, reading=reading)
+    """Fetch strictly JMdict-backed English glosses and valid readings."""
+    en_data = dictionary.lookup_english_exact(lemma=lemma, reading=reading)
     en_gloss = _short_en_gloss(en_data)
-    if en_gloss:
-        explanation_parts.append(f"EN: {en_gloss}")
+    all_glosses = set(en_data.get("all_glosses") or [])
+    all_valid_readings = list(en_data.get("all_valid_readings") or [])
 
     head = f"{lemma}（{reading}）" if reading and reading != lemma else lemma
-    explanation = f"{head} — {' / '.join(explanation_parts)}" if explanation_parts else head
+    explanation = f"{head} — {en_gloss}" if en_gloss else head
     return {
-        "jj_def": jj_def,
-        "jj_examples": jj_examples,
         "en_gloss": en_gloss,
+        "all_glosses": all_glosses,
+        "all_valid_readings": all_valid_readings,
+        "missing_db": bool(en_data.get("missing_db")),
         "explanation": explanation,
     }
 
 
-def _load_cached_jj_pool(exclude_lemma: str, limit: int = 30) -> list[dict[str, str]]:
-    """Return other cached words that have easy-Japanese definitions."""
-    with db.get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT lemma, reading, jj_json FROM dict_cache
-            WHERE jj_json IS NOT NULL AND lemma != ?
-            ORDER BY updated_at DESC LIMIT ?
-            """,
-            (exclude_lemma, limit),
-        ).fetchall()
+def _verified_reading_meta(lemma: str, reading: str) -> tuple[str, dict[str, Any]] | None:
+    """Validate that `lemma` is a kanji word whose `reading` matches JMdict."""
+    norm_reading = katakana_to_hiragana((reading or "").strip())
+    if not lemma or not norm_reading or len(norm_reading) < 2 or norm_reading == lemma:
+        return None
+    if not _KANJI_RE.search(lemma):
+        return None
 
-    out: list[dict[str, str]] = []
-    for r in rows:
-        try:
-            jj = json.loads(r["jj_json"])
-        except (TypeError, ValueError):
-            continue
-        defn = str(jj.get("simple_definition") or "").strip()
-        if defn:
-            out.append({"lemma": r["lemma"], "reading": r["reading"], "jj_def": defn})
-    return out
+    meta = _get_word_meta(lemma, norm_reading)
+    if not meta["all_valid_readings"]:
+        meta = _get_word_meta(lemma, "")
+    if not meta["all_valid_readings"] or norm_reading not in meta["all_valid_readings"]:
+        return None
+    return norm_reading, meta
 
 
-def _generate_reading_distractors(reading: str, vocab_pool: list[dict[str, Any]]) -> list[str]:
-    """Generate 3 plausible hiragana distractors for a kanji word's reading."""
+def _generate_reading_distractors(
+    reading: str,
+    vocab_pool: list[dict[str, Any]],
+    forbidden_readings: set[str] | None = None,
+) -> list[str]:
+    """Generate 3 plausible hiragana distractors excluding any valid readings of the word."""
     distractors: list[str] = []
-    seen = {reading}
+    seen = {reading} | (forbidden_readings or set())
 
     # 1. Realistic phonetic variations (dakuten / long vowel / sokuon)
     for idx, ch in enumerate(reading):
@@ -239,22 +229,25 @@ def _build_reading_recall_question(
     trouble_item_id: int | None,
     fallback: bool = False,
 ) -> dict[str, Any] | None:
-    """Create a Kanji -> Hiragana reading recall question without sentence context."""
-    if not lemma or not reading or len(reading) < 2 or reading == lemma:
+    """Create a Kanji -> Hiragana reading recall question validated against JMdict."""
+    verified = _verified_reading_meta(lemma, reading)
+    if verified is None:
         return None
-    if not _KANJI_RE.search(lemma):
-        return None
+    norm_reading, meta = verified
 
-    distractors = _generate_reading_distractors(reading, vocab_pool)
+    distractors = _generate_reading_distractors(
+        norm_reading,
+        vocab_pool,
+        forbidden_readings=set(meta["all_valid_readings"]),
+    )
     if len(distractors) < 3:
         return None
 
-    choices = [reading, *distractors[:3]]
-    rng = random.Random(f"read:{lemma}:{reading}")
+    choices = [norm_reading, *distractors[:3]]
+    rng = random.Random(f"read:{lemma}:{norm_reading}")
     rng.shuffle(choices)
 
-    meta = _get_word_meta(lemma, reading)
-    hint = meta["jj_def"] or (f"EN: {meta['en_gloss']}" if meta["en_gloss"] else "")
+    hint = meta["en_gloss"] or ""
     return {
         "question_id": f"q_{q_idx}",
         "kind": "reading_recall",
@@ -264,8 +257,8 @@ def _build_reading_recall_question(
         "prompt_word": lemma,
         "prompt_text": "How do you read this word?",
         "choices": choices,
-        "correct_answer": reading,
-        "full_sentence": f"{lemma}（{reading}）",
+        "correct_answer": norm_reading,
+        "full_sentence": f"{lemma}（{norm_reading}）",
         "hint": hint,
         "explanation": meta["explanation"],
         "fallback": fallback,
@@ -277,34 +270,45 @@ def _collect_en_distractor_words(
     exclude_lemma: str,
     exclude_gloss: str,
     vocab_pool: list[dict[str, Any]],
+    exclude_glosses: set[str] | None = None,
     limit: int = 3,
 ) -> list[dict[str, str]]:
-    """Collect distinct words + concise JMdict English glosses for distractors."""
+    """Collect distinct words whose JMdict glosses do not overlap target or each other."""
     out: list[dict[str, str]] = []
     seen_lemmas = {exclude_lemma}
-    seen_glosses = {exclude_gloss.lower()}
+    used_gloss_sets: list[tuple[set[str], str]] = [
+        (set(exclude_glosses or set()), exclude_gloss or "")
+    ]
 
-    for v in vocab_pool[:25]:
+    def try_add(w: str, r: str, gloss: str, gset: set[str]) -> bool:
+        if w in seen_lemmas or not gloss:
+            return False
+        if any(_glosses_overlap(gset, prev_set, gloss, prev_g) for prev_set, prev_g in used_gloss_sets):
+            return False
+        seen_lemmas.add(w)
+        used_gloss_sets.append((gset, gloss))
+        out.append({"lemma": w, "reading": r, "gloss": gloss})
+        return True
+
+    for v in vocab_pool[:30]:
         w = v["lemma"]
         r = v.get("reading") or ""
         if w in seen_lemmas:
             continue
         meta = _get_word_meta(w, r)
-        g = meta["en_gloss"]
-        if g and g.lower() not in seen_glosses:
-            seen_lemmas.add(w)
-            seen_glosses.add(g.lower())
-            out.append({"lemma": w, "reading": r, "gloss": g})
+        if meta["en_gloss"]:
+            try_add(w, r, meta["en_gloss"], meta["all_glosses"])
         if len(out) >= limit:
             return out
 
-    for w, r, g in _FALLBACK_VOCAB_ENTRIES:
+    for w, r, fb_gloss in _FALLBACK_VOCAB_ENTRIES:
         if len(out) >= limit:
             break
-        if w not in seen_lemmas and g.lower() not in seen_glosses:
-            seen_lemmas.add(w)
-            seen_glosses.add(g.lower())
-            out.append({"lemma": w, "reading": r, "gloss": g})
+        meta = _get_word_meta(w, r)
+        if meta["en_gloss"]:
+            try_add(w, r, meta["en_gloss"], meta["all_glosses"])
+        elif meta["missing_db"]:
+            try_add(w, r, fb_gloss, {fb_gloss.lower()})
 
     return out
 
@@ -319,40 +323,22 @@ def _build_meaning_match_question(
     sent_text: str = "",
     fallback: bool = False,
 ) -> dict[str, Any] | None:
-    """Create a standalone Word -> Meaning question (same-language choices, no plot context)."""
+    """Create a standalone Word -> Dictionary Meaning question (JMdict only)."""
     meta = _get_word_meta(lemma, reading)
-    correct_meaning: str | None = None
-    distractor_meanings: list[str] = []
-    prompt_text = "What does this word mean?"
-
-    # Prefer pure J-J mode when >= 3 other J-J cached definitions are available
-    if meta["jj_def"]:
-        jj_pool = _load_cached_jj_pool(exclude_lemma=lemma)
-        jj_dists: list[str] = []
-        seen_defs = {meta["jj_def"]}
-        for item in jj_pool:
-            if item["jj_def"] not in seen_defs:
-                seen_defs.add(item["jj_def"])
-                jj_dists.append(item["jj_def"])
-            if len(jj_dists) >= 3:
-                break
-        if len(jj_dists) >= 3:
-            correct_meaning = meta["jj_def"]
-            distractor_meanings = jj_dists
-            prompt_text = "Choose the matching Japanese meaning:"
-
-    if correct_meaning is None and meta["en_gloss"]:
-        correct_meaning = meta["en_gloss"]
-        dist_entries = _collect_en_distractor_words(
-            exclude_lemma=lemma,
-            exclude_gloss=correct_meaning,
-            vocab_pool=vocab_pool,
-            limit=3,
-        )
-        distractor_meanings = [d["gloss"] for d in dist_entries]
-
-    if correct_meaning is None or len(distractor_meanings) < 3:
+    correct_meaning = meta["en_gloss"]
+    if not correct_meaning:
         return None
+
+    dist_entries = _collect_en_distractor_words(
+        exclude_lemma=lemma,
+        exclude_gloss=correct_meaning,
+        exclude_glosses=meta["all_glosses"],
+        vocab_pool=vocab_pool,
+        limit=3,
+    )
+    if len(dist_entries) < 3:
+        return None
+    distractor_meanings = [d["gloss"] for d in dist_entries]
 
     choices = [correct_meaning, *distractor_meanings[:3]]
     rng = random.Random(f"mean:{lemma}:{reading}")
@@ -369,7 +355,7 @@ def _build_meaning_match_question(
         "prompt_label": "Word → Meaning",
         "target_display": lemma,
         "prompt_word": lemma,
-        "prompt_text": prompt_text,
+        "prompt_text": "Choose the dictionary meaning:",
         "choices": choices,
         "correct_answer": correct_meaning,
         "full_sentence": f"{lemma}（{reading}）" if reading and reading != lemma else lemma,
@@ -388,33 +374,22 @@ def _build_def_to_word_question(
     trouble_item_id: int | None,
     fallback: bool = False,
 ) -> dict[str, Any] | None:
-    """Create a reverse Meaning -> Word recall question."""
+    """Create a reverse Dictionary Meaning -> Word recall question (JMdict only)."""
     meta = _get_word_meta(lemma, reading)
-    prompt_def = meta["jj_def"] or meta["en_gloss"]
+    prompt_def = meta["en_gloss"]
     if not prompt_def:
         return None
 
-    distractor_words: list[str] = []
-    seen = {lemma}
-    for d in _collect_en_distractor_words(
+    dist_entries = _collect_en_distractor_words(
         exclude_lemma=lemma,
-        exclude_gloss=meta["en_gloss"] or prompt_def,
+        exclude_gloss=prompt_def,
+        exclude_glosses=meta["all_glosses"],
         vocab_pool=vocab_pool,
         limit=3,
-    ):
-        if d["lemma"] not in seen:
-            seen.add(d["lemma"])
-            distractor_words.append(d["lemma"])
-
-    for fb_w, _, _ in _FALLBACK_VOCAB_ENTRIES:
-        if len(distractor_words) >= 3:
-            break
-        if fb_w not in seen:
-            seen.add(fb_w)
-            distractor_words.append(fb_w)
-
-    if len(distractor_words) < 3:
+    )
+    if len(dist_entries) < 3:
         return None
+    distractor_words = [d["lemma"] for d in dist_entries]
 
     choices = [lemma, *distractor_words[:3]]
     rng = random.Random(f"rev:{lemma}:{reading}")
@@ -443,8 +418,8 @@ def _build_match_pairs_question(
     candidate_words: list[dict[str, Any]],
     fallback: bool = False,
 ) -> dict[str, Any] | None:
-    """Create a 4-pair interactive Word <-> Meaning match-up question."""
-    enriched: list[dict[str, Any]] = []
+    """Create a 4-pair Word <-> JMdict Meaning board with disjoint dictionary glosses."""
+    chosen: list[dict[str, Any]] = []
     seen_lemmas: set[str] = set()
 
     pool_with_fallback = list(candidate_words) + [
@@ -457,47 +432,34 @@ def _build_match_pairs_question(
         reading = (item.get("reading") or "").strip()
         if not lemma or lemma in seen_lemmas:
             continue
-        seen_lemmas.add(lemma)
         meta = _get_word_meta(lemma, reading)
-        en_gloss = meta["en_gloss"] or item.get("_fb_gloss")
-        if not meta["jj_def"] and not en_gloss:
+        en_gloss = meta["en_gloss"]
+        gloss_set = meta["all_glosses"]
+        if not en_gloss:
+            if meta["missing_db"] and item.get("_fb_gloss"):
+                en_gloss = str(item["_fb_gloss"])
+                gloss_set = {en_gloss.lower()}
+            else:
+                continue
+
+        if any(
+            _glosses_overlap(gloss_set, prev["all_glosses"], en_gloss, prev["en_gloss"])
+            for prev in chosen
+        ):
             continue
-        enriched.append(
+
+        seen_lemmas.add(lemma)
+        chosen.append(
             {
                 "lemma": lemma,
                 "reading": reading,
-                "jj_def": meta["jj_def"],
                 "en_gloss": en_gloss,
+                "all_glosses": gloss_set,
                 "trouble_item_id": item.get("trouble_item_id"),
             }
         )
-        if len(enriched) >= 16:
+        if len(chosen) >= 4:
             break
-
-    # Pick 4 with J-J if at least 4 distinct J-J definitions exist; otherwise 4 English glosses
-    chosen: list[dict[str, Any]] = []
-    use_jj = False
-    jj_candidates = [e for e in enriched if e["jj_def"]]
-    if len(jj_candidates) >= 4:
-        seen_defs: set[str] = set()
-        for e in jj_candidates:
-            if e["jj_def"] not in seen_defs:
-                seen_defs.add(e["jj_def"])
-                chosen.append(e)
-            if len(chosen) == 4:
-                use_jj = True
-                break
-
-    if len(chosen) < 4:
-        chosen = []
-        seen_glosses: set[str] = set()
-        for e in enriched:
-            g = e["en_gloss"]
-            if g and g.lower() not in seen_glosses:
-                seen_glosses.add(g.lower())
-                chosen.append(e)
-            if len(chosen) == 4:
-                break
 
     if len(chosen) < 4:
         return None
@@ -508,7 +470,7 @@ def _build_match_pairs_question(
     trouble_ids: list[int] = []
 
     for idx, entry in enumerate(chosen):
-        meaning = entry["jj_def"] if use_jj else entry["en_gloss"]
+        meaning = entry["en_gloss"]
         pairs.append(
             {
                 "id": idx,
@@ -536,7 +498,7 @@ def _build_match_pairs_question(
         "trouble_item_ids": trouble_ids,
         "prompt_label": "Vocab Match-Up",
         "target_display": ", ".join(p["word"] for p in pairs),
-        "prompt_text": "Match each Japanese word to its meaning:",
+        "prompt_text": "Match each Japanese word to its dictionary meaning:",
         "left_items": left_items,
         "right_items": right_items,
         "pairs": pairs,
@@ -565,88 +527,91 @@ def _build_cloze_question(
     avoid_sentences: set[str] | None = None,
     avoid_kind_sentences: set[tuple[str, str]] | None = None,
 ) -> dict[str, Any] | None:
-    """Create a 4-choice Context Cloze question, preferring fresh non-book sentences when cached."""
+    """Create a 4-choice Text Context Cloze strictly matched on exact token boundaries."""
     meta = _get_word_meta(lemma, reading)
-    target_sentence = ""
-    matched_surface = ""
-    is_fresh_sentence = False
-
     blocked_cloze = {st for k, st in (avoid_kind_sentences or set()) if k == "cloze"}
 
-    # Prefer fresh everyday example sentences from J-J cache so the user can't just recall plot
-    for ex in meta["jj_examples"]:
-        if ex in blocked_cloze:
+    candidate_sentences: list[str] = []
+    if preferred_sentence and preferred_sentence.strip():
+        candidate_sentences.append(preferred_sentence.strip())
+    for s in sentences:
+        txt = (s.get("text") or "").strip()
+        if txt and txt not in candidate_sentences:
+            candidate_sentences.append(txt)
+
+    if avoid_sentences:
+        candidate_sentences.sort(key=lambda st: (1 if st in avoid_sentences else 0))
+
+    target_sentence = ""
+    matched_surface = ""
+    blanked = ""
+
+    for sent in candidate_sentences:
+        if sent in blocked_cloze:
             continue
-        for cand in [lemma, *surface_candidates]:
-            if cand and cand in ex:
-                target_sentence = ex
-                matched_surface = cand
-                is_fresh_sentence = True
-                break
-        if target_sentence:
-            break
-
-    if not target_sentence:
-        candidate_sentences: list[str] = []
-        if preferred_sentence:
-            candidate_sentences.append(preferred_sentence)
-        for s in sentences:
-            txt = s.get("text", "")
-            if txt and txt not in candidate_sentences:
-                candidate_sentences.append(txt)
-
-        if avoid_sentences:
-            candidate_sentences.sort(key=lambda st: (1 if st in avoid_sentences else 0))
-
-        for sent in candidate_sentences:
-            if sent in blocked_cloze:
-                continue
-            for cand in surface_candidates:
-                if cand and cand in sent:
-                    target_sentence = sent
-                    matched_surface = cand
-                    break
-            if target_sentence:
-                break
+        span = find_exact_word_span(sent, lemma)
+        if span is None:
+            continue
+        start, end, surf = span
+        cand_blanked = f"{sent[:start]}＿＿＿{sent[end:]}"
+        if cand_blanked.replace("＿＿＿", surf, 1) != sent:
+            continue
+        target_sentence = sent
+        matched_surface = surf
+        blanked = cand_blanked
+        break
 
     if not target_sentence or not matched_surface:
         return None
 
-    blanked = target_sentence.replace(matched_surface, "＿＿＿", 1)
-
     target_pos = next((v["pos"] for v in vocab_pool if v["lemma"] == lemma), None)
     distractors: list[str] = []
     seen = {matched_surface, lemma}
+    used_gloss_sets: list[tuple[set[str], str]] = [
+        (meta["all_glosses"], meta["en_gloss"] or "")
+    ]
 
     ordered_pool = sorted(
         vocab_pool,
-        key=lambda v: (0 if target_pos and v["pos"] == target_pos else 1, v["surface"]),
+        key=lambda v: (0 if target_pos and v["pos"] == target_pos else 1, v["lemma"]),
     )
     for v in ordered_pool:
-        cand = v["surface"] if matched_surface != lemma else v["lemma"]
-        if cand not in seen and len(cand) >= 2:
-            seen.add(cand)
-            distractors.append(cand)
+        cand = (v.get("lemma") or "").strip()
+        if not cand or cand in seen or len(cand) < 2 or cand in target_sentence:
+            continue
+        d_meta = _get_word_meta(cand, v.get("reading") or "")
+        if d_meta["en_gloss"] and any(
+            _glosses_overlap(d_meta["all_glosses"], ps, d_meta["en_gloss"], pg)
+            for ps, pg in used_gloss_sets
+        ):
+            continue
+        seen.add(cand)
+        if d_meta["en_gloss"]:
+            used_gloss_sets.append((d_meta["all_glosses"], d_meta["en_gloss"]))
+        distractors.append(cand)
         if len(distractors) >= 3:
             break
 
     for pad in _FALLBACK_DISTRACTORS:
         if len(distractors) >= 3:
             break
-        if pad not in seen:
+        if pad not in seen and pad not in target_sentence:
             seen.add(pad)
             distractors.append(pad)
+
+    if len(distractors) < 3:
+        return None
 
     choices = [matched_surface, *distractors[:3]]
     rng = random.Random(target_sentence + matched_surface)
     rng.shuffle(choices)
 
-    hint = meta["jj_def"] or (f"読み: {reading}" if reading else "")
+    hint = meta["en_gloss"] or (f"読み: {reading}" if reading else "")
     return {
         "question_id": f"q_{q_idx}",
         "kind": "cloze",
         "trouble_item_id": trouble_item_id,
-        "prompt_label": "Fresh Context Cloze" if is_fresh_sentence else "Context Cloze",
+        "prompt_label": "Text Context Cloze",
         "target_display": lemma,
         "blanked_sentence": blanked,
         "choices": choices,
@@ -666,18 +631,24 @@ def _build_scramble_question(
     trouble_item_id: int | None,
     fallback: bool = False,
 ) -> dict[str, Any] | None:
-    """Create a Bunsetsu Chunk Scramble question from a sentence."""
-    chunks = chunk_into_bunsetsu(sentence)
-    if len(chunks) < 3 or len(chunks) > 7:
+    """Create a Bunsetsu Chunk Scramble verifying exact lossless sentence reconstruction."""
+    clean = (sentence or "").strip()
+    if len(clean) < 8 or len(clean) > 55:
+        return None
+
+    chunks = chunk_into_bunsetsu(clean)
+    if len(chunks) < 3 or len(chunks) > 6:
+        return None
+    if "".join(chunks) != clean:
         return None
 
     shuffled = list(chunks)
-    rng = random.Random(sentence + f"#{q_idx}")
+    rng = random.Random(clean + f"#{q_idx}")
     rng.shuffle(shuffled)
     if shuffled == chunks:
         shuffled = shuffled[1:] + shuffled[:1]
 
-    hint = f"Focus: {target_display}" if target_display else "Arrange the chunks into natural Japanese order."
+    hint = f"Focus: {target_display}" if target_display else "Arrange the chunks into the exact sentence from the text."
     return {
         "question_id": f"q_{q_idx}",
         "kind": "scramble",
@@ -686,9 +657,9 @@ def _build_scramble_question(
         "target_display": target_display or chunks[0],
         "chunks": shuffled,
         "correct_answer": chunks,
-        "full_sentence": "".join(chunks),
+        "full_sentence": clean,
         "hint": hint,
-        "explanation": sentence.strip(),
+        "explanation": clean,
         "fallback": fallback,
     }
 
@@ -701,9 +672,11 @@ def _build_particle_question(
     trouble_item_id: int | None,
     fallback: bool = False,
 ) -> dict[str, Any] | None:
-    """Create a 4-choice Particle Fix question from a sentence."""
+    """Create a 4-choice Particle Fix question verified against the exact sentence text."""
     parsed = extract_particle_quiz(sentence)
     if parsed is None:
+        return None
+    if parsed["blanked_sentence"].replace("＿＿", parsed["correct"], 1) != parsed["full_sentence"]:
         return None
 
     return {
@@ -716,7 +689,11 @@ def _build_particle_question(
         "choices": parsed["choices"],
         "correct_answer": parsed["correct"],
         "full_sentence": parsed["full_sentence"],
-        "hint": f"Focus: {target_display}" if target_display else "Pick the particle that fits the sentence.",
+        "hint": (
+            f"Focus: {target_display}"
+            if target_display
+            else "Pick the exact particle used in this sentence from the text."
+        ),
         "explanation": parsed["full_sentence"],
         "fallback": fallback,
     }
@@ -732,20 +709,24 @@ def _build_typed_reading_question(
     fallback: bool = False,
     is_aged: bool = False,
 ) -> dict[str, Any] | None:
-    """Create an active typed Kanji -> Reading recall question (with optional safety-net choices)."""
-    if not lemma or not reading or len(reading) < 2 or reading == lemma:
+    """Create an active typed Kanji -> Reading recall question validated against JMdict."""
+    verified = _verified_reading_meta(lemma, reading)
+    if verified is None:
         return None
-    if not _KANJI_RE.search(lemma):
-        return None
+    norm_reading, meta = verified
 
-    distractors = _generate_reading_distractors(reading, vocab_pool)
-    choices = [reading, *distractors[:3]] if len(distractors) >= 3 else []
+    distractors = _generate_reading_distractors(
+        norm_reading,
+        vocab_pool,
+        forbidden_readings=set(meta["all_valid_readings"]),
+    )
+    choices = [norm_reading, *distractors[:3]] if len(distractors) >= 3 else []
     if choices:
-        rng = random.Random(f"typed:{lemma}:{reading}")
+        rng = random.Random(f"typed:{lemma}:{norm_reading}")
         rng.shuffle(choices)
 
-    meta = _get_word_meta(lemma, reading)
-    hint = meta["jj_def"] or (f"EN: {meta['en_gloss']}" if meta["en_gloss"] else "")
+    hint = meta["en_gloss"] or ""
+    accepted = sorted(set(meta["all_valid_readings"]) | {norm_reading})
     return {
         "question_id": f"q_{q_idx}",
         "kind": "typed_reading",
@@ -755,8 +736,9 @@ def _build_typed_reading_question(
         "prompt_word": lemma,
         "prompt_text": "Type the reading in romaji or hiragana:",
         "choices": choices,
-        "correct_answer": reading,
-        "full_sentence": f"{lemma}（{reading}）",
+        "correct_answer": norm_reading,
+        "accepted_answers": accepted,
+        "full_sentence": f"{lemma}（{norm_reading}）",
         "hint": hint,
         "explanation": meta["explanation"],
         "fallback": fallback,
@@ -775,21 +757,24 @@ def _build_sentence_output_question(
     fallback: bool = False,
     is_aged: bool = False,
 ) -> dict[str, Any] | None:
-    """Create a 1-sentence AI-coached active production challenge."""
+    """Create a 1-sentence AI-coached active production challenge using JMdict + book text."""
     clean_target = (target_word or "").strip()
     if not clean_target:
         return None
 
-    meta = _get_word_meta(clean_target, reading) if item_type == "word" else {
-        "jj_def": None,
-        "jj_examples": [],
-        "en_gloss": None,
-        "explanation": sent_text or clean_target,
-    }
-    meaning_hint = meta["jj_def"] or meta["en_gloss"] or ""
+    meta = (
+        _get_word_meta(clean_target, reading)
+        if item_type == "word"
+        else {"en_gloss": None, "explanation": sent_text or clean_target}
+    )
+    meaning_hint = meta["en_gloss"] or ""
     if not meaning_hint and item_type == "grammar":
-        meaning_hint = f"Pattern from: {sent_text}" if sent_text else "Practice this expression in a new sentence."
-    example_hint = (meta["jj_examples"][0] if meta["jj_examples"] else sent_text) or ""
+        meaning_hint = (
+            f"Pattern from: {sent_text}"
+            if sent_text
+            else "Practice this expression in a new sentence."
+        )
+    example_hint = sent_text.strip() if sent_text else ""
 
     return {
         "question_id": f"q_{q_idx}",
@@ -812,11 +797,11 @@ def _build_sentence_output_question(
     }
 
 
-_OUTPUT_EVAL_SYSTEM_PROMPT = """あなたは親切な日本語学習コーチです。
-学習者が指定された単語または文法・表現を使って短い日本語の文を1つ書きました。
-完璧でなくても、意味が通じていてターゲットの語句を使おうとしていれば合格（passed: true）にしてください。
+_OUTPUT_EVAL_SYSTEM_PROMPT = """You are a friendly Japanese writing coach helping an English-speaking learner practice vocabulary.
+The learner wrote 1 short Japanese sentence using the target word or expression.
+If the sentence is understandable and genuinely attempts the target word/expression, set "passed": true.
 
-必ず次のJSON形式のみを返してください（マークダウン不要）:
+Respond strictly with valid JSON (no markdown fences) and write "verdict" and "grammar_tip" strictly in English (NEVER use Chinese):
 {
   "passed": true,
   "verdict": "1-sentence encouraging evaluation in English",
@@ -858,12 +843,12 @@ async def evaluate_output_sentence(
         }
 
     user_prompt = (
-        f"ターゲット語句 ({item_type}): {target_word}"
-        + (f"（{reading}）" if reading else "")
+        f"Target ({item_type}): {target_word}"
+        + (f" ({reading})" if reading else "")
         + "\n"
-        + (f"意味ヒント: {meaning_hint}\n" if meaning_hint else "")
-        + f"学習者の文: {clean_sentence}\n\n"
-        "この文を添削・フィードバックしてください。"
+        + (f"Dictionary meaning: {meaning_hint}\n" if meaning_hint else "")
+        + f"Learner sentence: {clean_sentence}\n\n"
+        "Evaluate this sentence in concise English (never Chinese) and suggest 1 natural Japanese phrasing."
     )
 
     settings = db.get_all_settings()

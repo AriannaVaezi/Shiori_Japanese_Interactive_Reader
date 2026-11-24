@@ -754,6 +754,8 @@ html[data-furigana="off"] ruby rt {
   padding: 3px 6px;
   box-shadow: var(--shadow);
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: calc(100vw - 24px);
   align-items: center;
   gap: 2px;
 }
@@ -769,13 +771,14 @@ html[data-furigana="off"] ruby rt {
   padding: 4px 9px;
   border-radius: 999px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .sel-action-btn:hover {
   background: rgba(255, 255, 255, 0.16);
 }
 
-.sel-action-btn + .sel-action-btn {
+.sel-action-btn:not([hidden]) ~ .sel-action-btn:not([hidden]) {
   border-left: 1px solid rgba(255, 255, 255, 0.28);
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;

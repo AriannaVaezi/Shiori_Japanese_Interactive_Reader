@@ -174,7 +174,7 @@ function openThreadInDrawer(thread) {
   statusNote.hidden = true;
 
   if (activeContext.targetText) {
-    targetBadge.textContent = `表現: ${activeContext.targetText}`;
+    targetBadge.textContent = `Focus: ${activeContext.targetText}`;
     targetBadge.hidden = false;
   } else {
     targetBadge.hidden = true;
@@ -247,7 +247,12 @@ export async function loadChapterGrammarThreads(bookId, chapterIndex) {
   renderNotesList();
 }
 
-export async function openGrammarForSentence({ sentId, sentenceText, targetText = "" }) {
+export async function openGrammarForSentence({
+  sentId,
+  sentenceText,
+  targetText = "",
+  autoAsk = true,
+}) {
   const bookId = state.currentBook?.id;
   const chapterIndex = state.currentChapter?.chapter_index;
   if (bookId == null || chapterIndex == null) return;
@@ -259,6 +264,9 @@ export async function openGrammarForSentence({ sentId, sentenceText, targetText 
 
   if (existing && existing.messages?.length) {
     openThreadInDrawer(existing);
+    if (!autoAsk) {
+      requestAnimationFrame(() => input.focus());
+    }
     return;
   }
 
@@ -276,12 +284,22 @@ export async function openGrammarForSentence({ sentId, sentenceText, targetText 
   statusNote.hidden = true;
 
   if (cleanTarget) {
-    targetBadge.textContent = `表現: ${cleanTarget}`;
+    targetBadge.textContent = `Focus: ${cleanTarget}`;
     targetBadge.hidden = false;
   } else {
     targetBadge.hidden = true;
   }
   sentencePreview.textContent = sentenceText;
+
+  if (!autoAsk) {
+    messagesEl.replaceChildren();
+    const hint = document.createElement("div");
+    hint.className = "drawer-empty";
+    hint.textContent = "Passage context attached. Type your question below to start chatting.";
+    messagesEl.appendChild(hint);
+    requestAnimationFrame(() => input.focus());
+    return;
+  }
 
   await submitQuestion("");
 }

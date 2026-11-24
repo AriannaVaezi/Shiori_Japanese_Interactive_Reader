@@ -2,7 +2,7 @@
 
 import { api } from "./api.js";
 import { closeGrammarDrawer, loadChapterGrammarThreads, openGrammarForSentence } from "./grammar.js";
-import { closeLookup, openWordLookup } from "./lookup.js";
+import { closeLookup, openSelectionLookup, openWordLookup } from "./lookup.js";
 import { extractCleanText, extractRangeCleanText, state } from "./state.js";
 
 const libraryView = document.getElementById("library-view");
@@ -26,6 +26,8 @@ const btnTheme = document.getElementById("btn-cycle-theme");
 const viewport = document.getElementById("reader-viewport");
 const contentEl = document.getElementById("reader-content");
 const selectionTooltip = document.getElementById("selection-tooltip");
+const btnSelLookup = document.getElementById("btn-sel-lookup");
+const btnSelChat = document.getElementById("btn-sel-chat");
 const btnSelSaveNote = document.getElementById("btn-sel-save-note");
 const btnSelAskGrammar = document.getElementById("btn-sel-ask-grammar");
 
@@ -345,7 +347,7 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapt
 
     if (Date.now() < suppressSelectionClickUntil) return;
     const sel = window.getSelection();
-    if (sel && sel.toString().trim().length > 1) return;
+    if (sel && !sel.isCollapsed && sel.toString().trim().length >= 1) return;
 
     const tokEl = e.target.closest?.(".tok");
     if (tokEl) {
@@ -354,7 +356,7 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapt
     }
   });
 
-  // Passage selection bar for saving quotes/notes or asking grammar
+  // Passage selection bar for Look Up, Chat, Grammar, or saving quotes/notes
   document.addEventListener("mouseup", (e) => {
     if (readerView.hidden) return;
     if (!contentEl.contains(e.target)) {
@@ -370,7 +372,11 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapt
 
     const range = sel.getRangeAt(0);
     const cleanTarget = extractRangeCleanText(range);
-    if (cleanTarget.length < 2 || cleanTarget.length > 1500) {
+    if (
+      cleanTarget.length < 1 ||
+      cleanTarget.length > 1500 ||
+      /^[\s。、！？!?「」『』（）()【】・…—―\-]+$/.test(cleanTarget)
+    ) {
       hideSelectionTooltip();
       return;
     }
@@ -383,13 +389,25 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapt
 
     suppressSelectionClickUntil = Date.now() + 250;
     const rect = range.getBoundingClientRect();
+    const anchorRect = {
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    };
     pendingSelection = {
       sentId: sentEl?.dataset.sentId || null,
       sentenceText: sentEl ? extractCleanText(sentEl) : cleanTarget,
       targetText: cleanTarget,
+      anchorRect,
     };
 
+    btnSelLookup.hidden = cleanTarget.length > 40;
+    btnSelChat.hidden = cleanTarget.length > 400;
     btnSelAskGrammar.hidden = !(sentEl && cleanTarget.length <= 200);
+    btnSelSaveNote.hidden = false;
     selectionTooltip.hidden = false;
     const tipRect = selectionTooltip.getBoundingClientRect();
     const left = Math.min(
@@ -399,6 +417,33 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapt
     const top = Math.max(60, rect.top - tipRect.height - 8);
     selectionTooltip.style.left = `${Math.round(left)}px`;
     selectionTooltip.style.top = `${Math.round(top)}px`;
+  });
+
+  btnSelLookup.addEventListener("click", () => {
+    if (!pendingSelection) return;
+    const payload = { ...pendingSelection };
+    hideSelectionTooltip();
+    window.getSelection()?.removeAllRanges();
+    openSelectionLookup({
+      text: payload.targetText,
+      sentId: payload.sentId,
+      sentenceText: payload.sentenceText,
+      anchorRect: payload.anchorRect,
+    });
+  });
+
+  btnSelChat.addEventListener("click", () => {
+    if (!pendingSelection) return;
+    const payload = { ...pendingSelection };
+    hideSelectionTooltip();
+    window.getSelection()?.removeAllRanges();
+    closeLookup();
+    openGrammarForSentence({
+      sentId: payload.sentId || "selection",
+      sentenceText: payload.sentenceText,
+      targetText: payload.targetText,
+      autoAsk: false,
+    });
   });
 
   btnSelSaveNote.addEventListener("click", () => {

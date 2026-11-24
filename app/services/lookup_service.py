@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app import db, dictionary, llm
+from app import db, dictionary, llm, tokenizer
 
 _JJ_SYSTEM_PROMPT = """あなたは日本語学習者向けのやさしい国語辞典です。
 英語は一切使わず、小学生〜初中級の学習者が読める簡単な日本語だけで語句を説明してください。
@@ -164,6 +164,17 @@ def _log_lookup_event(
     )
 
 
+def _resolve_reading_for_text(text: str) -> str:
+    """Resolve a canonical hiragana reading for an arbitrary selected span."""
+    clean = (text or "").strip()
+    if not clean:
+        return ""
+    exact = dictionary.lookup_english_exact(lemma=clean)
+    if exact.get("all_valid_readings"):
+        return str(exact["all_valid_readings"][0]).strip()
+    return tokenizer.text_to_hiragana_reading(clean)
+
+
 async def lookup_jj(
     *,
     lemma: str,
@@ -178,7 +189,7 @@ async def lookup_jj(
 ) -> dict[str, Any]:
     """Return a cached or freshly generated easy-Japanese definition for a word."""
     clean_lemma = (lemma or surface).strip()
-    clean_reading = (reading or clean_lemma).strip()
+    clean_reading = (reading or "").strip() or _resolve_reading_for_text(clean_lemma) or clean_lemma
     clean_surface = (surface or clean_lemma).strip()
 
     if not force_regenerate:
@@ -320,7 +331,7 @@ def lookup_en(
 ) -> dict[str, Any]:
     """Return offline JMdict English entries and record an English-reveal trouble signal."""
     clean_lemma = (lemma or surface).strip()
-    clean_reading = (reading or clean_lemma).strip()
+    clean_reading = (reading or "").strip() or _resolve_reading_for_text(clean_lemma) or clean_lemma
     clean_surface = (surface or clean_lemma).strip()
 
     en_data: dict[str, Any] | None = None
@@ -338,6 +349,13 @@ def lookup_en(
             surface=clean_surface,
             reading=clean_reading,
         )
+        if not en_data.get("entries") and not en_data.get("missing_db"):
+            fallback_lemma = tokenizer.lemmatize_single_word(clean_lemma)
+            if fallback_lemma:
+                en_data = dictionary.lookup_english(
+                    lemma=fallback_lemma,
+                    surface=clean_surface,
+                )
         if not en_data.get("missing_db"):
             now = db.utc_now_iso()
             with db.get_conn() as conn:

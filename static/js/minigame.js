@@ -524,8 +524,10 @@ export function initMiniGame({ onQuizCompleted, onNextChapter, onBackToLibrary }
     const q = sessionState.questions[sessionState.index];
     const userKana = normalizeKanaInput(inputReading.value);
     if (!userKana) return;
-    const expected = normalizeKanaInput(q.correct_answer);
-    const isCorrect = userKana === expected;
+    const acceptedList = (
+      q.accepted_answers?.length ? q.accepted_answers : [q.correct_answer]
+    ).map((a) => normalizeKanaInput(a));
+    const isCorrect = acceptedList.includes(userKana);
     inputReading.disabled = true;
     btnTypedCheck.disabled = true;
     btnTypedShowChoices.hidden = true;
@@ -639,9 +641,7 @@ export function initMiniGame({ onQuizCompleted, onNextChapter, onBackToLibrary }
     if (!sessionState || sessionState.answered) return;
     const q = sessionState.questions[sessionState.index];
     const userOrder = sessionState.scrambleSelected.map((i) => q.chunks[i]);
-    const isCorrect =
-      userOrder.length === q.correct_answer.length &&
-      userOrder.every((chunk, idx) => chunk === q.correct_answer[idx]);
+    const isCorrect = userOrder.join("") === q.full_sentence;
     renderScrambleChips();
     showFeedback(isCorrect, q);
     btnScrambleCheck.disabled = true;
