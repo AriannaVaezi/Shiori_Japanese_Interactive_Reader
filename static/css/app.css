@@ -519,6 +519,20 @@ html[data-furigana="off"] ruby rt {
   background: rgba(168, 130, 62, 0.16);
 }
 
+html[data-hide-annotations="true"] .tok.sticky-word {
+  text-decoration: none;
+}
+
+html[data-hide-annotations="true"] .sent.has-grammar,
+html[data-hide-annotations="true"] .sent.has-note,
+html[data-hide-annotations="true"] .sent.has-grammar.has-note {
+  background: transparent;
+}
+
+html[data-hide-annotations="true"] .sent-ask-btn {
+  display: none;
+}
+
 .sent-ask-btn {
   appearance: none;
   border: 1px solid var(--border);
@@ -1868,6 +1882,14 @@ html[data-theme="dark"] .aged-badge {
 
 .manga-stage[data-ocr-overlay="off"] .manga-ocr-layer {
   display: none;
+}
+
+html[data-hide-annotations="true"] .manga-ocr-layer {
+  display: none !important;
+}
+
+html[data-hide-annotations="true"] .manga-ocr-status {
+  display: none !important;
 }
 
 .manga-ocr-box {

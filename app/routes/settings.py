@@ -35,6 +35,7 @@ class SettingsUpdateRequest(BaseModel):
     manga_layout: str | None = None
     manga_spread_offset: str | None = None
     manga_ocr_overlay: str | None = None
+    hide_annotations: str | None = None
 
 
 class LLMTestRequest(BaseModel):

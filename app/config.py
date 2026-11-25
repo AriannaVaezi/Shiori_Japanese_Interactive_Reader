@@ -33,6 +33,7 @@ DEFAULT_SETTINGS: dict[str, str] = {
     "manga_layout": "spread",
     "manga_spread_offset": "1",
     "manga_ocr_overlay": "hover",
+    "hide_annotations": "false",
 }
 
 ALLOWED_SETTING_KEYS = set(DEFAULT_SETTINGS.keys())

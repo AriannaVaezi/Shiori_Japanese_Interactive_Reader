@@ -22,6 +22,7 @@ export const state = {
     manga_layout: "spread",
     manga_spread_offset: "1",
     manga_ocr_overlay: "hover",
+    hide_annotations: "false",
   },
   books: [],
   currentBook: null,

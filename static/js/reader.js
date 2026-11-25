@@ -29,6 +29,8 @@ const btnFurigana = document.getElementById("btn-cycle-furigana");
 const btnFontDown = document.getElementById("btn-font-down");
 const btnFontUp = document.getElementById("btn-font-up");
 const btnTheme = document.getElementById("btn-cycle-theme");
+const btnHighlights = document.getElementById("btn-toggle-highlights");
+const btnMangaMarks = document.getElementById("btn-manga-hide-marks");
 
 const viewport = document.getElementById("reader-viewport");
 const contentEl = document.getElementById("reader-content");
@@ -64,9 +66,11 @@ export function applyVisualSettings() {
   const furi = FURIGANA_MODES.includes(s.furigana_mode) ? s.furigana_mode : "all";
   const writing = s.reading_mode === "vertical" ? "vertical" : "horizontal";
   const fontSize = Math.max(14, Math.min(32, parseInt(s.font_size || "20", 10) || 20));
+  const hideMarks = String(s.hide_annotations || "false") === "true";
 
   document.documentElement.dataset.theme = theme;
   document.documentElement.dataset.furigana = furi;
+  document.documentElement.dataset.hideAnnotations = hideMarks ? "true" : "false";
   document.documentElement.style.setProperty("--reader-font-size", `${fontSize}px`);
 
   viewport.classList.toggle("mode-vertical", writing === "vertical");
@@ -75,6 +79,15 @@ export function applyVisualSettings() {
   btnWriting.textContent = writing === "vertical" ? "縦 Vertical" : "横 Horizontal";
   btnFurigana.textContent = FURIGANA_LABELS[furi];
   btnTheme.textContent = THEME_LABELS[theme];
+  const marksLabel = hideMarks ? "Marks: Hidden" : "Marks: Shown";
+  if (btnHighlights) {
+    btnHighlights.textContent = marksLabel;
+    btnHighlights.classList.toggle("btn-primary", hideMarks);
+  }
+  if (btnMangaMarks) {
+    btnMangaMarks.textContent = marksLabel;
+    btnMangaMarks.classList.toggle("btn-primary", hideMarks);
+  }
 }
 
 function getScrollRatio() {
@@ -350,6 +363,16 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapt
     persistVisualPref({ font_size: String(Math.min(32, cur + 2)) });
   });
 
+  btnHighlights?.addEventListener("click", () => {
+    const nextHidden = String(state.settings.hide_annotations || "false") !== "true";
+    if (nextHidden) {
+      closeLookup();
+      closeGrammarDrawer();
+      hideSelectionTooltip();
+    }
+    persistVisualPref({ hide_annotations: nextHidden ? "true" : "false" });
+  });
+
   // Delegated click: ? grammar button or word token
   contentEl.addEventListener("click", (e) => {
     state.lastActivityMs = Date.now();
@@ -523,12 +546,17 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapt
     if (
       !document.getElementById("quiz-modal").hidden ||
       !document.getElementById("trouble-modal").hidden ||
-      !document.getElementById("notes-modal").hidden
+      !document.getElementById("notes-modal").hidden ||
+      !document.getElementById("settings-modal").hidden
     ) return;
     const tag = document.activeElement?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (e.key === "[") advanceChapter(-1);
     if (e.key === "]") advanceChapter(1);
+    if (e.key === "h" || e.key === "H") {
+      e.preventDefault();
+      btnHighlights?.click();
+    }
   });
 
   window.addEventListener("beforeunload", () => {

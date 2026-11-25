@@ -29,6 +29,8 @@ const btnNext = document.getElementById("btn-manga-next");
 const btnLayout = document.getElementById("btn-manga-layout");
 const btnOffset = document.getElementById("btn-manga-offset");
 const btnOcrMode = document.getElementById("btn-manga-ocr-mode");
+const btnHideMarks = document.getElementById("btn-manga-hide-marks");
+const btnReaderHighlights = document.getElementById("btn-toggle-highlights");
 const btnScanOcr = document.getElementById("btn-manga-scan-ocr");
 const btnCrop = document.getElementById("btn-manga-crop");
 const btnTrouble = document.getElementById("btn-manga-trouble");
@@ -196,12 +198,23 @@ function applyToolbarLabels() {
   const layout = getLayoutMode();
   const offset = getSpreadOffset();
   const ocrMode = getOcrOverlayMode();
+  const hideMarks = String(state.settings.hide_annotations || "false") === "true";
 
   btnLayout.textContent = layout === "vertical" ? "1-Page Vertical" : "2-Page Spread";
   btnOffset.textContent = offset === 1 ? "Cover: Solo" : "Cover: Paired";
   btnOffset.hidden = layout === "vertical";
   btnOcrMode.textContent = OCR_MODE_LABELS[ocrMode];
   mangaStage.dataset.ocrOverlay = ocrMode;
+  document.documentElement.dataset.hideAnnotations = hideMarks ? "true" : "false";
+  const marksLabel = hideMarks ? "Marks: Hidden" : "Marks: Shown";
+  if (btnHideMarks) {
+    btnHideMarks.textContent = marksLabel;
+    btnHideMarks.classList.toggle("btn-primary", hideMarks);
+  }
+  if (btnReaderHighlights) {
+    btnReaderHighlights.textContent = marksLabel;
+    btnReaderHighlights.classList.toggle("btn-primary", hideMarks);
+  }
   btnCrop.classList.toggle("btn-primary", cropMode);
   btnCrop.textContent = cropMode ? "✂ Cancel Select" : "✂ Select Area";
   mangaViewport.classList.toggle("crop-active", cropMode);
@@ -1036,6 +1049,17 @@ export function initManga({
     }
   });
 
+  btnHideMarks?.addEventListener("click", () => {
+    const nextHidden = String(state.settings.hide_annotations || "false") !== "true";
+    if (nextHidden) {
+      closeMangaTextBar();
+      closeGrammarDrawer();
+      closeLookup();
+      hideSelectionTooltip();
+    }
+    persistMangaPref({ hide_annotations: nextHidden ? "true" : "false" });
+  });
+
   btnScanOcr.addEventListener("click", async () => {
     if (!mangaDetail) return;
     if (getOcrOverlayMode() === "off") {
@@ -1220,6 +1244,9 @@ export function initManga({
     } else if (e.key === "c" || e.key === "C") {
       e.preventDefault();
       btnCrop.click();
+    } else if (e.key === "h" || e.key === "H") {
+      e.preventDefault();
+      btnHideMarks?.click();
     }
   });
 

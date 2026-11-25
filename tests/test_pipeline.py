@@ -1942,4 +1942,29 @@ def test_manga_toc_extraction_and_backfill(tmp_path: Path, monkeypatch):
         db.set_db_path(None)
 
 
+def test_hide_annotations_setting_and_assets(temp_env):
+    """Verify hide_annotations setting persistence and clean-view UI/CSS markup."""
+    with TestClient(app) as client:
+        s_get = client.get("/api/settings")
+        assert s_get.status_code == 200
+        assert s_get.json()["hide_annotations"] == "false"
+
+        s_put = client.put("/api/settings", json={"hide_annotations": "true"})
+        assert s_put.status_code == 200
+        assert s_put.json()["hide_annotations"] == "true"
+
+        idx = client.get("/")
+        assert idx.status_code == 200
+        assert 'id="btn-toggle-highlights"' in idx.text
+        assert 'id="btn-manga-hide-marks"' in idx.text
+
+        css_match = re.search(r'href="(/static/v/[a-f0-9]+/css/app\.css)"', idx.text)
+        assert css_match is not None
+        css_res = client.get(css_match.group(1))
+        assert css_res.status_code == 200
+        assert 'html[data-hide-annotations="true"] .manga-ocr-layer' in css_res.text
+        assert 'html[data-hide-annotations="true"] .sent.has-note' in css_res.text
+
+
+
 
