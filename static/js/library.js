@@ -159,7 +159,10 @@ export function showLibraryView() {
   if (document.fullscreenElement && document.exitFullscreen) {
     document.exitFullscreen().catch(() => {});
   }
-  document.documentElement.classList.remove("manga-fullscreen");
+  document.documentElement.classList.remove("manga-fullscreen", "mobile-chrome-hidden", "sel-tooltip-docked");
+  if (window.location.hash) {
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
   if (readerView) readerView.hidden = true;
   if (mangaView) mangaView.hidden = true;
   libraryView.hidden = false;

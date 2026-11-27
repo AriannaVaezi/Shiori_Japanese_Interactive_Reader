@@ -8,6 +8,7 @@ import {
   openGrammarForSentence,
 } from "./grammar.js";
 import { closeLookup, openSelectionLookup, openWordLookup } from "./lookup.js";
+import { closeTimerPopover } from "./timer.js";
 import {
   HIGHLIGHT_COLORS,
   applyQuoteHighlightToElements,
@@ -124,7 +125,7 @@ function setScrollRatio(ratio) {
   }
 }
 
-async function flushProgress(extraDelta = false) {
+async function flushProgress(extraDelta = false, { keepalive = false } = {}) {
   if (!state.currentBook || !state.currentChapter || readerView.hidden) return;
   const now = Date.now();
   let deltaSec = 0;
@@ -133,11 +134,15 @@ async function flushProgress(extraDelta = false) {
   }
   lastProgressSavedMs = now;
   try {
-    await api.saveProgress(state.currentBook.id, {
-      chapter_index: state.currentChapter.chapter_index,
-      scroll_ratio: getScrollRatio(),
-      reading_seconds_delta: deltaSec,
-    });
+    await api.saveProgress(
+      state.currentBook.id,
+      {
+        chapter_index: state.currentChapter.chapter_index,
+        scroll_ratio: getScrollRatio(),
+        reading_seconds_delta: deltaSec,
+      },
+      { keepalive }
+    );
   } catch {
     // ignore transient progress save errors
   }
@@ -152,6 +157,7 @@ function scheduleProgressSave() {
 export function hideSelectionTooltip() {
   selectionTooltip.hidden = true;
   selectionTooltip.classList.remove("touch-docked");
+  document.documentElement.classList.remove("sel-tooltip-docked");
   pendingSelection = null;
 }
 
@@ -260,6 +266,7 @@ export async function openChapter(bookId, chapterIndex, restoreScrollRatio = 0) 
     return;
   }
   state.currentChapter = chapter;
+  history.replaceState(null, "", `#book/${bookId}/${chapter.chapter_index}`);
   contentEl.innerHTML = chapter.html || "";
 
   applyTokenHighlights(
@@ -380,6 +387,7 @@ export function initReader({
   btnBack.addEventListener("click", async () => {
     await flushProgress(true);
     closeLookup();
+    closeTimerPopover();
     closeGrammarDrawer();
     hideSelectionTooltip();
     readerView.hidden = true;
@@ -566,11 +574,13 @@ export function initReader({
 
     if (isTouchOrNarrowViewport()) {
       selectionTooltip.classList.add("touch-docked");
+      document.documentElement.classList.add("sel-tooltip-docked");
       selectionTooltip.style.left = "";
       selectionTooltip.style.top = "";
       selectionTooltip.hidden = false;
     } else {
       selectionTooltip.classList.remove("touch-docked");
+      document.documentElement.classList.remove("sel-tooltip-docked");
       selectionTooltip.hidden = false;
       const tipRect = selectionTooltip.getBoundingClientRect();
       const left = Math.min(
@@ -785,6 +795,14 @@ export function initReader({
   });
 
   window.addEventListener("beforeunload", () => {
-    flushProgress(true);
+    flushProgress(true, { keepalive: true });
+  });
+  window.addEventListener("pagehide", () => {
+    flushProgress(true, { keepalive: true });
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      flushProgress(true, { keepalive: true });
+    }
   });
 }

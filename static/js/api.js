@@ -33,10 +33,11 @@ export const api = {
   getChapter(bookId, chapterIndex) {
     return request(`/api/books/${bookId}/chapters/${chapterIndex}`);
   },
-  saveProgress(bookId, payload) {
+  saveProgress(bookId, payload, { keepalive = false } = {}) {
     return request(`/api/books/${bookId}/progress`, {
       method: "PUT",
       body: JSON.stringify(payload),
+      keepalive: Boolean(keepalive),
     });
   },
   listManga() {

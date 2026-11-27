@@ -50,6 +50,9 @@ const btnSettings = document.getElementById("btn-manga-settings");
 const btnFullscreen = document.getElementById("btn-manga-fullscreen");
 
 const ocrStatusEl = document.getElementById("manga-ocr-status");
+const scrubberBar = document.getElementById("manga-scrubber-bar");
+const pageSlider = document.getElementById("manga-page-slider");
+const scrubberLabel = document.getElementById("manga-scrubber-label");
 const textBar = document.getElementById("manga-text-bar");
 const textSourceEl = document.getElementById("manga-text-source");
 const textTokensEl = document.getElementById("manga-text-tokens");
@@ -85,6 +88,8 @@ let verticalLoadObserver = null;
 let verticalTrackObserver = null;
 let suppressVerticalScrollTrack = false;
 let statusHideTimer = null;
+let isScrubbing = false;
+let scrubTimer = null;
 
 let onBackLibraryCb = null;
 let onSaveNoteCb = null;
@@ -282,10 +287,27 @@ function syncTocSelect(pageIndex) {
   tocSelect.value = activeVal;
 }
 
+function syncPageScrubber(pageIndex) {
+  if (!mangaDetail) return;
+  const total = Math.max(1, mangaDetail.page_count || 1);
+  if (pageSlider) {
+    pageSlider.min = "1";
+    pageSlider.max = String(total);
+    pageSlider.disabled = total <= 1;
+    if (!isScrubbing) {
+      pageSlider.value = String(pageIndex + 1);
+    }
+  }
+  if (scrubberLabel) {
+    scrubberLabel.textContent = `${pageIndex + 1} / ${total}`;
+  }
+}
+
 async function setActivePageContext(pageIndex, reloadThreads = true) {
   if (!mangaDetail) return;
   const clamped = Math.max(0, Math.min(mangaDetail.page_count - 1, Number(pageIndex) || 0));
   currentPageIndex = clamped;
+  history.replaceState(null, "", `#manga/${mangaDetail.id}/${clamped}`);
 
   state.currentChapter = {
     chapter_index: clamped,
@@ -296,6 +318,7 @@ async function setActivePageContext(pageIndex, reloadThreads = true) {
   pageInput.max = String(Math.max(1, mangaDetail.page_count));
   pageTotalEl.textContent = `/ ${mangaDetail.page_count}`;
   syncTocSelect(clamped);
+  syncPageScrubber(clamped);
 
   updateSpreadNavDisabled();
   const threadKey = `${mangaDetail.id}:${clamped}`;
@@ -321,7 +344,7 @@ function updateSpreadNavDisabled() {
   btnNext.disabled = sIdx >= spreads.length - 1;
 }
 
-async function flushMangaProgress(extraDelta = false) {
+async function flushMangaProgress(extraDelta = false, { keepalive = false } = {}) {
   if (!mangaDetail || mangaView.hidden) return;
   const now = Date.now();
   let deltaSec = 0;
@@ -334,11 +357,15 @@ async function flushMangaProgress(extraDelta = false) {
   }
   lastProgressSavedMs = now;
   try {
-    await api.saveProgress(mangaDetail.id, {
-      chapter_index: currentPageIndex,
-      scroll_ratio: 0,
-      reading_seconds_delta: deltaSec,
-    });
+    await api.saveProgress(
+      mangaDetail.id,
+      {
+        chapter_index: currentPageIndex,
+        scroll_ratio: 0,
+        reading_seconds_delta: deltaSec,
+      },
+      { keepalive }
+    );
   } catch {
     // ignore transient progress save errors
   }
@@ -518,6 +545,7 @@ export function closeMangaTextBar() {
   textBar.hidden = true;
   textEditWrap.hidden = true;
   activeInspector = null;
+  if (scrubberBar) scrubberBar.hidden = false;
   mangaStage.querySelectorAll(".manga-ocr-box.active").forEach((el) => el.classList.remove("active"));
 }
 
@@ -691,6 +719,7 @@ async function openMangaTextInspector({ pageIndex, sentId, text, tokens, boxEl =
   const activeSentIds = new Set((state.grammarThreads || []).map((t) => t.sent_id));
   textTokensEl.classList.toggle("has-grammar", activeSentIds.has(activeInspector.sentId));
 
+  if (scrubberBar) scrubberBar.hidden = true;
   textBar.hidden = false;
 }
 
@@ -900,7 +929,7 @@ function resetMangaZoom() {
   applyMangaTransform();
 }
 
-function renderStage() {
+function renderStage({ skipOcr = false } = {}) {
   if (!mangaDetail) return;
   disconnectVerticalObservers();
   resetMangaZoom();
@@ -983,8 +1012,10 @@ function renderStage() {
       });
     }
 
-    enqueueOcr([currentPageIndex], { priority: true });
-    enqueueOcr([currentPageIndex + 1, currentPageIndex + 2], { priority: false });
+    if (!skipOcr) {
+      enqueueOcr([currentPageIndex], { priority: true });
+      enqueueOcr([currentPageIndex + 1, currentPageIndex + 2], { priority: false });
+    }
     return;
   }
 
@@ -996,8 +1027,10 @@ function renderStage() {
       group.appendChild(createPageFrame(pageObj, { eager: true }));
       mangaStage.appendChild(group);
       requestAnimationFrame(layoutVisiblePages);
-      enqueueOcr([pageObj.page_index], { priority: true });
-      enqueueOcr([pageObj.page_index + 1, pageObj.page_index + 2], { priority: false });
+      if (!skipOcr) {
+        enqueueOcr([pageObj.page_index], { priority: true });
+        enqueueOcr([pageObj.page_index + 1, pageObj.page_index + 2], { priority: false });
+      }
     }
     return;
   }
@@ -1018,19 +1051,21 @@ function renderStage() {
 
   requestAnimationFrame(layoutVisiblePages);
 
-  const visibleIdxs = spreadPages.map((p) => p.page_index);
-  enqueueOcr(visibleIdxs, { priority: true });
-  for (const offset of [1, 2]) {
-    if (sIdx + offset < spreads.length) {
-      enqueueOcr(
-        spreads[sIdx + offset].map((p) => p.page_index),
-        { priority: false }
-      );
+  if (!skipOcr) {
+    const visibleIdxs = spreadPages.map((p) => p.page_index);
+    enqueueOcr(visibleIdxs, { priority: true });
+    for (const offset of [1, 2]) {
+      if (sIdx + offset < spreads.length) {
+        enqueueOcr(
+          spreads[sIdx + offset].map((p) => p.page_index),
+          { priority: false }
+        );
+      }
     }
   }
 }
 
-export async function goToMangaPage(targetPageIndex, { syncRender = true } = {}) {
+export async function goToMangaPage(targetPageIndex, { syncRender = true, skipOcr = false } = {}) {
   if (!mangaDetail || !mangaDetail.page_count) return;
   const clamped = Math.max(0, Math.min(mangaDetail.page_count - 1, Number(targetPageIndex) || 0));
   hideShotPopover();
@@ -1038,7 +1073,7 @@ export async function goToMangaPage(targetPageIndex, { syncRender = true } = {})
 
   if (getLayoutMode() === "vertical") {
     closeMangaTextBar();
-    await setActivePageContext(clamped, true);
+    await setActivePageContext(clamped, !skipOcr);
     scheduleProgressSave();
     const frame = mangaStage.querySelector(`.manga-page-frame[data-page-index="${clamped}"]`);
     if (frame) {
@@ -1053,17 +1088,19 @@ export async function goToMangaPage(targetPageIndex, { syncRender = true } = {})
         suppressVerticalScrollTrack = false;
       }, 180);
     } else if (syncRender) {
-      renderStage();
+      renderStage({ skipOcr });
     }
-    enqueueOcr([clamped], { priority: true });
-    enqueueOcr([clamped + 1, clamped + 2], { priority: false });
+    if (!skipOcr) {
+      enqueueOcr([clamped], { priority: true });
+      enqueueOcr([clamped + 1, clamped + 2], { priority: false });
+    }
     return;
   }
 
   closeMangaTextBar();
-  await setActivePageContext(clamped, true);
+  await setActivePageContext(clamped, !skipOcr);
   scheduleProgressSave();
-  if (syncRender) renderStage();
+  if (syncRender) renderStage({ skipOcr });
 }
 
 export function stepManga(delta) {
@@ -1246,6 +1283,11 @@ function attachCropGestureHandler() {
 
     const rect = frame.getBoundingClientRect();
     const pageIndex = parseInt(frame.dataset.pageIndex, 10);
+    try {
+      frame.setPointerCapture?.(e.pointerId);
+    } catch {
+      // ignore unsupported pointer capture
+    }
     const box = document.createElement("div");
     box.className = "manga-crop-rect";
     frame.appendChild(box);
@@ -1258,6 +1300,12 @@ function attachCropGestureHandler() {
       startY: e.clientY,
       box,
     };
+  });
+
+  window.addEventListener("pointercancel", () => {
+    if (!dragState) return;
+    dragState.box?.remove();
+    dragState = null;
   });
 
   window.addEventListener("pointermove", (e) => {
@@ -1565,6 +1613,35 @@ export function initManga({
     } else {
       pageInput.value = String(currentPageIndex + 1);
     }
+  });
+
+  if (scrubberBar) {
+    for (const evt of ["pointerdown", "touchstart", "click"]) {
+      scrubberBar.addEventListener(evt, (e) => e.stopPropagation());
+    }
+  }
+
+  pageSlider?.addEventListener("input", () => {
+    if (!mangaDetail) return;
+    const val = parseInt(pageSlider.value, 10);
+    if (Number.isNaN(val)) return;
+    isScrubbing = true;
+    const clamped = Math.max(0, Math.min(mangaDetail.page_count - 1, val - 1));
+    if (scrubberLabel) scrubberLabel.textContent = `${clamped + 1} / ${mangaDetail.page_count}`;
+    pageInput.value = String(clamped + 1);
+    clearTimeout(scrubTimer);
+    scrubTimer = setTimeout(() => {
+      goToMangaPage(clamped, { syncRender: true, skipOcr: true });
+    }, 50);
+  });
+
+  pageSlider?.addEventListener("change", () => {
+    if (!mangaDetail) return;
+    clearTimeout(scrubTimer);
+    isScrubbing = false;
+    const val = parseInt(pageSlider.value, 10);
+    if (Number.isNaN(val)) return;
+    goToMangaPage(val - 1, { syncRender: true, skipOcr: false });
   });
 
   tocSelect?.addEventListener("change", () => {
@@ -1923,6 +2000,14 @@ export function initManga({
   });
 
   window.addEventListener("beforeunload", () => {
-    flushMangaProgress(true);
+    flushMangaProgress(true, { keepalive: true });
+  });
+  window.addEventListener("pagehide", () => {
+    flushMangaProgress(true, { keepalive: true });
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      flushMangaProgress(true, { keepalive: true });
+    }
   });
 }

@@ -2724,6 +2724,59 @@ def test_translate_in_context_screenshot_copy_and_lan_banner(temp_env, monkeypat
         assert "Translating in context" in grammar_js.text
 
 
+def test_mobile_manga_toolbar_scrubber_timer_and_refresh_restore(temp_env):
+    with TestClient(app) as client:
+        index_res = client.get("/")
+        assert index_res.status_code == 200
+        html = index_res.text
+
+        # 1) Timer popover is detached from <header class="reader-bar"> so it never clips inside horizontal scroll containers
+        reader_bar_start = html.index('class="reader-bar"')
+        reader_bar_end = html.index("</header>", reader_bar_start)
+        timer_pop_pos = html.index('id="timer-popover"')
+        assert timer_pop_pos > reader_bar_end
+
+        # 2) Manga page scrubber / scrollbar controls are present
+        assert 'id="manga-scrubber-bar"' in html
+        assert 'id="manga-page-slider"' in html
+
+        # 3) CSS fixes: no overlap in mobile toolbars, touch OCR boxes visible, crop disables box interception, pull-to-refresh contained
+        css_res = client.get("/static/css/app.css")
+        assert css_res.status_code == 200
+        css = css_res.text
+        assert "overscroll-behavior-y: contain;" in css
+        assert "flex: 1 0 100%;" in css
+        assert ".manga-viewport.crop-active .manga-ocr-box" in css
+        assert "@media (hover: none), (pointer: coarse)" in css
+        assert "html.sel-tooltip-docked .manga-text-bar" in css
+        assert ".manga-scrubber-bar" in css
+
+        # 4) JS fixes: pointerdown + dynamic positioning on timer, hash restore on refresh, manga scrubber & pointercancel
+        timer_js = client.get("/static/js/timer.js").text
+        assert '"pointerdown"' in timer_js
+        assert "positionTimerPopover" in timer_js
+
+        main_js = client.get("/static/js/main.js").text
+        assert "restoreViewFromHash" in main_js
+        assert "#book\\/" in main_js
+        assert "#manga\\/" in main_js
+
+        reader_js = client.get("/static/js/reader.js").text
+        assert "history.replaceState" in reader_js
+        assert "pagehide" in reader_js
+        assert "sel-tooltip-docked" in reader_js
+
+        library_js = client.get("/static/js/library.js").text
+        assert "history.replaceState" in library_js
+
+        manga_js = client.get("/static/js/manga.js").text
+        assert "manga-page-slider" in manga_js
+        assert "pointercancel" in manga_js
+        assert "history.replaceState" in manga_js
+        assert "pagehide" in manga_js
+
+
+
 
 
 

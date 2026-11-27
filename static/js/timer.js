@@ -67,19 +67,50 @@ export function resetTimer() {
   renderTimerUI();
 }
 
+export function closeTimerPopover() {
+  if (popover) popover.hidden = true;
+}
+
+function positionTimerPopover() {
+  if (!popover || !btnPill) return;
+  const rect = btnPill.getBoundingClientRect();
+  const popW = popover.offsetWidth || 290;
+  const popH = popover.offsetHeight || 170;
+  const left = Math.min(
+    Math.max(12, rect.right - popW),
+    Math.max(12, window.innerWidth - popW - 12)
+  );
+  const top = Math.min(
+    Math.max(12, rect.bottom + 8),
+    Math.max(12, window.innerHeight - popH - 12)
+  );
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+  popover.style.right = "auto";
+}
+
 export function initTimer({ onStartTimedQuiz }) {
   onStartQuizCb = onStartTimedQuiz;
 
   btnPill.addEventListener("click", (e) => {
     e.stopPropagation();
     popover.hidden = !popover.hidden;
-    renderTimerUI();
+    if (!popover.hidden) {
+      renderTimerUI();
+      positionTimerPopover();
+    }
   });
 
-  document.addEventListener("mousedown", (e) => {
+  document.addEventListener("pointerdown", (e) => {
     if (popover.hidden) return;
     if (popover.contains(e.target) || btnPill.contains(e.target)) return;
     popover.hidden = true;
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !popover.hidden) {
+      popover.hidden = true;
+    }
   });
 
   btnPause.addEventListener("click", () => {

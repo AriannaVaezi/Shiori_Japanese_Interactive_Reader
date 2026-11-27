@@ -73,24 +73,6 @@
         <button id="btn-toggle-highlights" class="btn btn-pill" type="button" title="Hide highlights, note tints, and grammar marks (H)">Marks: Shown</button>
         <div class="timer-anchor">
           <button id="btn-timer-pill" class="btn btn-pill" type="button" title="Active Reading Timer">⏱ 00:00 / 15m</button>
-          <div id="timer-popover" class="timer-popover" hidden>
-            <div class="timer-pop-head">
-              <strong>Reading Timer</strong>
-              <span id="timer-status-text" class="hint-text">Active</span>
-            </div>
-            <div class="timer-intervals">
-              <button class="btn btn-pill timer-int-btn" type="button" data-mins="0">Off</button>
-              <button class="btn btn-pill timer-int-btn" type="button" data-mins="10">10m</button>
-              <button class="btn btn-pill timer-int-btn" type="button" data-mins="15">15m</button>
-              <button class="btn btn-pill timer-int-btn" type="button" data-mins="20">20m</button>
-              <button class="btn btn-pill timer-int-btn" type="button" data-mins="30">30m</button>
-            </div>
-            <div class="timer-actions">
-              <button id="btn-timer-pause" class="btn btn-secondary" type="button">Pause</button>
-              <button id="btn-timer-reset" class="btn btn-ghost" type="button">Reset</button>
-              <button id="btn-timer-quiz" class="btn btn-primary" type="button">Review Quiz</button>
-            </div>
-          </div>
         </div>
         <button id="btn-open-trouble" class="btn btn-pill" type="button" title="Trouble Radar">
           Radar <span id="trouble-count-badge" class="badge" hidden>0</span>
@@ -107,6 +89,25 @@
         <button id="btn-open-settings-reader" class="btn btn-icon" type="button" title="Settings">⚙</button>
       </div>
     </header>
+
+    <div id="timer-popover" class="timer-popover" hidden>
+      <div class="timer-pop-head">
+        <strong>Reading Timer</strong>
+        <span id="timer-status-text" class="hint-text">Active</span>
+      </div>
+      <div class="timer-intervals">
+        <button class="btn btn-pill timer-int-btn" type="button" data-mins="0">Off</button>
+        <button class="btn btn-pill timer-int-btn" type="button" data-mins="10">10m</button>
+        <button class="btn btn-pill timer-int-btn" type="button" data-mins="15">15m</button>
+        <button class="btn btn-pill timer-int-btn" type="button" data-mins="20">20m</button>
+        <button class="btn btn-pill timer-int-btn" type="button" data-mins="30">30m</button>
+      </div>
+      <div class="timer-actions">
+        <button id="btn-timer-pause" class="btn btn-secondary" type="button">Pause</button>
+        <button id="btn-timer-reset" class="btn btn-ghost" type="button">Reset</button>
+        <button id="btn-timer-quiz" class="btn btn-primary" type="button">Review Quiz</button>
+      </div>
+    </div>
 
     <div id="reader-workspace" class="reader-workspace">
       <div id="reader-viewport" class="reader-viewport mode-horizontal">
@@ -206,6 +207,11 @@
         <div id="manga-stage" class="manga-stage"></div>
         <div id="manga-ocr-status" class="manga-ocr-status" hidden></div>
       </div>
+    </div>
+
+    <div id="manga-scrubber-bar" class="manga-scrubber-bar" aria-label="Manga page scrollbar">
+      <span id="manga-scrubber-label" class="manga-scrubber-label">1 / 1</span>
+      <input id="manga-page-slider" class="manga-page-slider" type="range" min="1" max="1" value="1" step="1" aria-label="Scrub through manga pages" />
     </div>
 
     <div id="manga-text-bar" class="manga-text-bar" hidden>

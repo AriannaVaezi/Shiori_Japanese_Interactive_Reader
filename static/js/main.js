@@ -26,7 +26,7 @@ import {
 } from "./reader.js";
 import { closeSettingsModal, initSettings, openSettingsModal } from "./settings.js";
 import { state } from "./state.js";
-import { initTimer, renderTimerUI, resetTimer } from "./timer.js";
+import { closeTimerPopover, initTimer, renderTimerUI, resetTimer } from "./timer.js";
 import {
   closeTroubleModal,
   initTrouble,
@@ -36,10 +36,43 @@ import {
 
 async function leaveReaderToLibrary() {
   closeLookup();
+  closeTimerPopover();
   closeGrammarDrawer();
   await closeMangaReader({ flush: false });
   document.getElementById("reader-view").hidden = true;
   showLibraryView();
+}
+
+async function restoreViewFromHash() {
+  const hash = (window.location.hash || "").trim();
+  if (!hash) return;
+  const bookMatch = hash.match(/^#book\/(\d+)(?:\/(\d+))?$/);
+  if (bookMatch) {
+    const bookId = Number(bookMatch[1]);
+    const saved = (state.books || []).find((b) => b.id === bookId)?.progress;
+    const hashCh = bookMatch[2] != null ? Number(bookMatch[2]) : null;
+    const chIdx = hashCh != null ? hashCh : Number(saved?.chapter_index || 0);
+    const scrollRatio =
+      saved && Number(saved.chapter_index) === chIdx ? Number(saved.scroll_ratio || 0) : 0;
+    try {
+      await openBook(bookId, chIdx, scrollRatio);
+    } catch {
+      showLibraryView();
+    }
+    return;
+  }
+  const mangaMatch = hash.match(/^#manga\/(\d+)(?:\/(\d+))?$/);
+  if (mangaMatch) {
+    const bookId = Number(mangaMatch[1]);
+    const saved = (state.books || []).find((b) => b.id === bookId)?.progress;
+    const pageIdx =
+      mangaMatch[2] != null ? Number(mangaMatch[2]) : Number(saved?.chapter_index || 0);
+    try {
+      await openManga(bookId, pageIdx);
+    } catch {
+      showLibraryView();
+    }
+  }
 }
 
 function refreshActiveHighlights() {
@@ -222,6 +255,7 @@ async function bootstrap() {
 
   refreshLLMStatus();
   await loadLibrary();
+  await restoreViewFromHash();
 }
 
 bootstrap();
