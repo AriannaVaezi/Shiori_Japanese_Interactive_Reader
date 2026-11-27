@@ -209,9 +209,10 @@
       </div>
     </div>
 
-    <div id="manga-scrubber-bar" class="manga-scrubber-bar" aria-label="Manga page scrollbar">
+    <div id="manga-scrubber-bar" class="manga-scrubber-bar" aria-label="Manga page scrollbar (right to left)">
+      <span id="manga-scrubber-end" class="manga-scrubber-end" title="Last page">p.1</span>
+      <input id="manga-page-slider" class="manga-page-slider" type="range" dir="rtl" min="1" max="1" value="1" step="1" aria-label="Scrub through manga pages (right to left)" />
       <span id="manga-scrubber-label" class="manga-scrubber-label">1 / 1</span>
-      <input id="manga-page-slider" class="manga-page-slider" type="range" min="1" max="1" value="1" step="1" aria-label="Scrub through manga pages" />
     </div>
 
     <div id="manga-text-bar" class="manga-text-bar" hidden>

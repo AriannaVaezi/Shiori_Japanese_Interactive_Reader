@@ -50,7 +50,9 @@ const btnSettings = document.getElementById("btn-manga-settings");
 const btnFullscreen = document.getElementById("btn-manga-fullscreen");
 
 const ocrStatusEl = document.getElementById("manga-ocr-status");
+const fsHoverZone = document.getElementById("manga-fs-hover-zone");
 const scrubberBar = document.getElementById("manga-scrubber-bar");
+const scrubberEnd = document.getElementById("manga-scrubber-end");
 const pageSlider = document.getElementById("manga-page-slider");
 const scrubberLabel = document.getElementById("manga-scrubber-label");
 const textBar = document.getElementById("manga-text-bar");
@@ -147,9 +149,16 @@ function isFullscreenActive() {
   return Boolean(document.fullscreenElement) || pseudoFullscreen;
 }
 
+function setFullscreenBarsOpen(open) {
+  document.documentElement.classList.toggle("manga-fs-bars-open", Boolean(open));
+}
+
 function syncFullscreenUi() {
   const active = isFullscreenActive() && !mangaView.hidden;
   document.documentElement.classList.toggle("manga-fullscreen", active);
+  if (!active) {
+    setFullscreenBarsOpen(false);
+  }
   if (btnFullscreen) {
     btnFullscreen.textContent = active ? "⛶ Exit Full" : "⛶ Fullscreen";
   }
@@ -290,6 +299,9 @@ function syncTocSelect(pageIndex) {
 function syncPageScrubber(pageIndex) {
   if (!mangaDetail) return;
   const total = Math.max(1, mangaDetail.page_count || 1);
+  if (scrubberEnd) {
+    scrubberEnd.textContent = `p.${total}`;
+  }
   if (pageSlider) {
     pageSlider.min = "1";
     pageSlider.max = String(total);
@@ -1105,6 +1117,7 @@ export async function goToMangaPage(targetPageIndex, { syncRender = true, skipOc
 
 export function stepManga(delta) {
   if (!mangaDetail) return;
+  setFullscreenBarsOpen(false);
   if (getLayoutMode() !== "spread") {
     goToMangaPage(currentPageIndex + delta);
     return;
@@ -1258,6 +1271,7 @@ export async function closeMangaReader({ flush = true } = {}) {
     await toggleMangaFullscreen(false);
   }
   resetMangaZoom();
+  setFullscreenBarsOpen(false);
   document.documentElement.classList.remove("mobile-chrome-hidden");
   hideShotPopover();
   closeMangaTextBar();
@@ -1771,20 +1785,46 @@ export function initManga({
   });
   btnFullscreen.addEventListener("click", () => toggleMangaFullscreen());
 
-  // Click / tap navigation in horizontal modes (Left = Next RTL, Right = Previous RTL, Center = Mobile Chrome Toggle)
+  fsHoverZone?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!isFullscreenActive()) return;
+    setFullscreenBarsOpen(!document.documentElement.classList.contains("manga-fs-bars-open"));
+  });
+
+  // Click / tap navigation in horizontal modes (Above page/top band = summon bars, Left = Next RTL, Right = Previous RTL, Center = toggle bars)
   mangaViewport.addEventListener("click", (e) => {
     if (mangaView.hidden || !mangaDetail) return;
-    if (getLayoutMode() === "vertical") return;
     if (cropMode || e.shiftKey || didJustDragCrop || suppressNextMangaClick) return;
     if (mangaZoom > 1.05) return;
     if (e.target.closest?.(".manga-ocr-box, #manga-text-bar, #manga-ocr-status, #manga-shot-popover")) return;
 
     const rect = mangaViewport.getBoundingClientRect();
+    const firstFrame = mangaStage.querySelector(".manga-page-frame");
+    const firstFrameRect = firstFrame ? firstFrame.getBoundingClientRect() : null;
+    const abovePage = Boolean(firstFrameRect && e.clientY < firstFrameRect.top - 2);
+    const inTopBand = e.clientY - rect.top <= 56;
+
+    if (abovePage || inTopBand) {
+      if (isFullscreenActive()) {
+        setFullscreenBarsOpen(!document.documentElement.classList.contains("manga-fs-bars-open"));
+        return;
+      }
+      if (document.documentElement.classList.contains("mobile-chrome-hidden")) {
+        document.documentElement.classList.remove("mobile-chrome-hidden");
+        requestAnimationFrame(layoutVisiblePages);
+        return;
+      }
+    }
+
+    if (getLayoutMode() === "vertical") return;
+
     const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
     if (relX < 0.3) {
       stepManga(1);
     } else if (relX > 0.7) {
       stepManga(-1);
+    } else if (isFullscreenActive()) {
+      setFullscreenBarsOpen(!document.documentElement.classList.contains("manga-fs-bars-open"));
     } else if (isMobileViewport() || window.matchMedia?.("(pointer: coarse)")?.matches) {
       document.documentElement.classList.toggle("mobile-chrome-hidden");
       requestAnimationFrame(layoutVisiblePages);
@@ -1960,6 +2000,10 @@ export function initManga({
         cropMode = false;
         applyToolbarLabels();
         setOcrStatus("");
+        return;
+      }
+      if (document.documentElement.classList.contains("manga-fs-bars-open")) {
+        setFullscreenBarsOpen(false);
         return;
       }
       if (pseudoFullscreen && !document.fullscreenElement) {

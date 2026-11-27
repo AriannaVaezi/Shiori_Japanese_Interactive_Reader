@@ -2736,9 +2736,11 @@ def test_mobile_manga_toolbar_scrubber_timer_and_refresh_restore(temp_env):
         timer_pop_pos = html.index('id="timer-popover"')
         assert timer_pop_pos > reader_bar_end
 
-        # 2) Manga page scrubber / scrollbar controls are present
+        # 2) Manga page scrubber / scrollbar controls are present and RTL
         assert 'id="manga-scrubber-bar"' in html
         assert 'id="manga-page-slider"' in html
+        assert 'dir="rtl"' in html
+        assert 'id="manga-scrubber-end"' in html
 
         # 3) CSS fixes: no overlap in mobile toolbars, touch OCR boxes visible, crop disables box interception, pull-to-refresh contained
         css_res = client.get("/static/css/app.css")
@@ -2750,6 +2752,9 @@ def test_mobile_manga_toolbar_scrubber_timer_and_refresh_restore(temp_env):
         assert "@media (hover: none), (pointer: coarse)" in css
         assert "html.sel-tooltip-docked .manga-text-bar" in css
         assert ".manga-scrubber-bar" in css
+        assert "direction: rtl;" in css
+        assert "html.manga-fullscreen.manga-fs-bars-open #manga-bar" in css
+        assert "html.manga-fullscreen.manga-fs-bars-open .manga-scrubber-bar" in css
 
         # 4) JS fixes: pointerdown + dynamic positioning on timer, hash restore on refresh, manga scrubber & pointercancel
         timer_js = client.get("/static/js/timer.js").text
@@ -2774,6 +2779,8 @@ def test_mobile_manga_toolbar_scrubber_timer_and_refresh_restore(temp_env):
         assert "pointercancel" in manga_js
         assert "history.replaceState" in manga_js
         assert "pagehide" in manga_js
+        assert "manga-fs-bars-open" in manga_js
+        assert "manga-fs-hover-zone" in manga_js
 
 
 
