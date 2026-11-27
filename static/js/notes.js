@@ -236,19 +236,28 @@ function inspectSavedCardSelection() {
   }
 
   pendingCardSelection = { noteId, fieldKey, plainStart, plainEnd };
-  noteHlPopover.hidden = false;
-  const popW = noteHlPopover.offsetWidth || 236;
-  const popH = noteHlPopover.offsetHeight || 40;
-  const left = Math.min(
-    Math.max(12, rect.left + rect.width / 2 - popW / 2),
-    Math.max(12, window.innerWidth - popW - 12)
-  );
-  let top = rect.top - popH - 8;
-  if (top < 12) {
-    top = Math.min(window.innerHeight - popH - 12, rect.bottom + 8);
+  const isTouchOrNarrow =
+    window.matchMedia?.("(pointer: coarse)")?.matches || window.innerWidth <= 768;
+  noteHlPopover.classList.toggle("touch-docked", Boolean(isTouchOrNarrow));
+  if (isTouchOrNarrow) {
+    noteHlPopover.style.left = "";
+    noteHlPopover.style.top = "";
+    noteHlPopover.hidden = false;
+  } else {
+    noteHlPopover.hidden = false;
+    const popW = noteHlPopover.offsetWidth || 236;
+    const popH = noteHlPopover.offsetHeight || 40;
+    const left = Math.min(
+      Math.max(12, rect.left + rect.width / 2 - popW / 2),
+      Math.max(12, window.innerWidth - popW - 12)
+    );
+    let top = rect.top - popH - 8;
+    if (top < 12) {
+      top = Math.min(window.innerHeight - popH - 12, rect.bottom + 8);
+    }
+    noteHlPopover.style.left = `${Math.round(left)}px`;
+    noteHlPopover.style.top = `${Math.round(top)}px`;
   }
-  noteHlPopover.style.left = `${Math.round(left)}px`;
-  noteHlPopover.style.top = `${Math.round(top)}px`;
 }
 
 async function fetchAndRenderNotes() {
@@ -591,10 +600,29 @@ export function initNotes({ onJumpToNote, onNotesChanged }) {
     });
   });
 
+  let noteSelTimer = null;
+  let touchingNoteHlPopover = false;
+
+  noteHlPopover?.addEventListener("pointerdown", () => {
+    touchingNoteHlPopover = true;
+    setTimeout(() => {
+      touchingNoteHlPopover = false;
+    }, 350);
+  });
+  noteHlPopover?.addEventListener("mousedown", (e) => e.preventDefault());
+
   listEl.addEventListener("mouseup", () => {
     requestAnimationFrame(inspectSavedCardSelection);
   });
   listEl.addEventListener("scroll", hideNoteHlPopover);
+
+  document.addEventListener("selectionchange", () => {
+    if (modal.hidden) return;
+    clearTimeout(noteSelTimer);
+    noteSelTimer = setTimeout(() => {
+      if (!touchingNoteHlPopover) inspectSavedCardSelection();
+    }, 160);
+  });
 
   document.addEventListener("pointerdown", (e) => {
     if (modal.hidden) return;

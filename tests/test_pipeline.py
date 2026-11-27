@@ -2550,5 +2550,63 @@ def test_async_llamacpp_startup_status_and_manga_screenshot(
         assert ".manga-shot-popover {\n  position: fixed;" in css_res.text.replace("\r\n", "\n")
 
 
+def test_mobile_phase1_lan_launcher_pwa_and_touch_assets(temp_env):
+    import importlib
+
+    run_mod = importlib.import_module("run")
+    args_default = run_mod.parse_args([])
+    assert (args_default.host, args_default.port) == ("127.0.0.1", 8000)
+
+    args_lan = run_mod.parse_args(["--lan", "--port", "8088"])
+    assert (args_lan.host, args_lan.port) == ("0.0.0.0", 8088)
+
+    with TestClient(app) as client:
+        manifest_res = client.get("/static/manifest.webmanifest")
+        assert manifest_res.status_code == 200
+        assert "application/manifest+json" in manifest_res.headers.get("content-type", "")
+        manifest_data = manifest_res.json()
+        assert manifest_data["display"] == "standalone"
+        assert manifest_data["short_name"] == "Shiori"
+
+        icon_res = client.get("/static/icon.svg")
+        assert icon_res.status_code == 200
+        assert "image/svg+xml" in icon_res.headers.get("content-type", "")
+        assert "栞" in icon_res.text
+
+        index_res = client.get("/")
+        assert index_res.status_code == 200
+        assert "viewport-fit=cover" in index_res.text
+        assert "/static/manifest.webmanifest" in index_res.text
+        assert 'autocorrect="off" autocapitalize="none" spellcheck="false"' in index_res.text
+
+        reader_js = client.get("/static/js/reader.js")
+        assert reader_js.status_code == 200
+        assert "selectionchange" in reader_js.text
+        assert "touch-docked" in reader_js.text
+        assert "pointer: coarse" in reader_js.text
+
+        notes_js = client.get("/static/js/notes.js")
+        assert notes_js.status_code == 200
+        assert "selectionchange" in notes_js.text
+        assert "touch-docked" in notes_js.text
+
+        lookup_js = client.get("/static/js/lookup.js")
+        assert lookup_js.status_code == 200
+        assert '"pointerdown"' in lookup_js.text
+        assert "window.innerWidth <= 768" in lookup_js.text
+
+        manga_js = client.get("/static/js/manga.js")
+        assert manga_js.status_code == 200
+        assert "shiori_mobile_manga_layout" in manga_js.text
+        assert "mobile-chrome-hidden" in manga_js.text
+        assert '"touchstart"' in manga_js.text
+
+        css_res = client.get("/static/css/app.css")
+        assert css_res.status_code == 200
+        assert "safe-area-inset-bottom" in css_res.text
+        assert ".selection-tooltip.touch-docked" in css_res.text
+        assert "html.mobile-chrome-hidden #manga-bar" in css_res.text
+
+
 
 

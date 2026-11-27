@@ -1,0 +1,17 @@
+{
+  "name": "栞 Shiori Reader",
+  "short_name": "Shiori",
+  "description": "Japanese-first interactive EPUB & Manga reader",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8f7f4",
+  "theme_color": "#3d5a80",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

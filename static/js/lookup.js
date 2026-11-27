@@ -46,6 +46,11 @@ export function closeLookup() {
 
 function positionPopover(anchorRect) {
   popover.hidden = false;
+  if (window.innerWidth <= 768) {
+    popover.style.left = "";
+    popover.style.top = "";
+    return;
+  }
   const pad = 12;
   const popRect = popover.getBoundingClientRect();
 
@@ -359,7 +364,7 @@ export function initLookup({ onAskGrammar, onSaveNote, onLookupLogged }) {
     }
   });
 
-  document.addEventListener("mousedown", (e) => {
+  document.addEventListener("pointerdown", (e) => {
     if (popover.hidden) return;
     if (popover.contains(e.target)) return;
     if (e.target.closest?.(".tok")) return;

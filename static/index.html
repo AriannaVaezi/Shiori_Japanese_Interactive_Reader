@@ -2,8 +2,13 @@
 <html lang="ja" data-theme="paper" data-furigana="all">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#3d5a80" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>栞 Shiori — Japanese Interactive EPUB &amp; Manga Reader</title>
+  <link rel="manifest" href="/static/manifest.webmanifest" />
+  <link rel="icon" type="image/svg+xml" href="/static/icon.svg" />
   <link rel="stylesheet" href="/static/css/app.css" />
 </head>
 <body>
@@ -471,7 +476,7 @@
           <!-- Typed Reading Recall (Romaji -> Hiragana) -->
           <div id="quiz-typed" class="quiz-typed" hidden>
             <div class="inline-row">
-              <input id="input-quiz-reading" type="text" autocomplete="off" placeholder="Type romaji (e.g. shoutengai) or ひらがな…" />
+              <input id="input-quiz-reading" type="text" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" inputmode="text" enterkeyhint="done" placeholder="Type romaji (e.g. shoutengai) or ひらがな…" />
               <button id="btn-typed-check" class="btn btn-primary" type="button">Check</button>
             </div>
             <div class="typed-subrow">

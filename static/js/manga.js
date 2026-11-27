@@ -93,6 +93,8 @@ let onOpenNotesCb = null;
 let onPageChangedCb = null;
 let onHighlightCreatedCb = null;
 
+const MOBILE_LAYOUT_STORAGE_KEY = "shiori_mobile_manga_layout";
+
 const MANGA_LAYOUTS = ["spread", "single", "vertical"];
 const MANGA_LAYOUT_LABELS = {
   spread: "2-Page Spread",
@@ -107,7 +109,21 @@ const OCR_MODE_LABELS = {
   off: "OCR: Off",
 };
 
+let mangaZoom = 1;
+let panX = 0;
+let panY = 0;
+let suppressNextMangaClick = false;
+let suppressClickTimer = null;
+
+function isMobileViewport() {
+  return window.innerWidth <= 768;
+}
+
 function getLayoutMode() {
+  if (isMobileViewport()) {
+    const local = localStorage.getItem(MOBILE_LAYOUT_STORAGE_KEY) || "single";
+    return MANGA_LAYOUTS.includes(local) ? local : "single";
+  }
   const mode = state.settings.manga_layout || "spread";
   return MANGA_LAYOUTS.includes(mode) ? mode : "spread";
 }
@@ -831,15 +847,45 @@ function disconnectVerticalObservers() {
   verticalTrackObserver = null;
 }
 
+function applyMangaTransform() {
+  const group = mangaStage.querySelector(".manga-spread-group");
+  if (!group) return;
+  if (mangaZoom <= 1.01) {
+    mangaZoom = 1;
+    panX = 0;
+    panY = 0;
+    group.style.transform = "";
+    mangaViewport.classList.remove("is-zoomed");
+    return;
+  }
+  const baseW = group.offsetWidth || mangaViewport.clientWidth;
+  const baseH = group.offsetHeight || mangaViewport.clientHeight;
+  const maxPanX = Math.max(0, (baseW * (mangaZoom - 1)) / 2);
+  const maxPanY = Math.max(0, (baseH * (mangaZoom - 1)) / 2);
+  panX = Math.max(-maxPanX, Math.min(maxPanX, panX));
+  panY = Math.max(-maxPanY, Math.min(maxPanY, panY));
+  group.style.transform = `translate3d(${panX.toFixed(1)}px, ${panY.toFixed(1)}px, 0) scale(${mangaZoom.toFixed(3)})`;
+  mangaViewport.classList.add("is-zoomed");
+}
+
+function resetMangaZoom() {
+  mangaZoom = 1;
+  panX = 0;
+  panY = 0;
+  applyMangaTransform();
+}
+
 function renderStage() {
   if (!mangaDetail) return;
   disconnectVerticalObservers();
+  resetMangaZoom();
   mangaStage.replaceChildren();
 
   const layout = getLayoutMode();
   mangaStage.classList.toggle("mode-spread", layout === "spread");
   mangaStage.classList.toggle("mode-single", layout === "single");
   mangaStage.classList.toggle("mode-vertical", layout === "vertical");
+  mangaViewport.classList.toggle("mode-horizontal-manga", layout !== "vertical");
   applyToolbarLabels();
 
   if (layout === "vertical") {
@@ -963,6 +1009,7 @@ export async function goToMangaPage(targetPageIndex, { syncRender = true } = {})
   if (!mangaDetail || !mangaDetail.page_count) return;
   const clamped = Math.max(0, Math.min(mangaDetail.page_count - 1, Number(targetPageIndex) || 0));
   hideShotPopover();
+  resetMangaZoom();
 
   if (getLayoutMode() === "vertical") {
     closeMangaTextBar();
@@ -1019,6 +1066,7 @@ export async function openManga(bookId, startPage = null) {
   closeGrammarDrawer();
   hideShotPopover();
   closeMangaTextBar();
+  document.documentElement.classList.remove("mobile-chrome-hidden");
   setOcrStatus("");
 
   const detail = await api.getManga(bookId);
@@ -1147,6 +1195,8 @@ export async function closeMangaReader({ flush = true } = {}) {
   if (isFullscreenActive()) {
     await toggleMangaFullscreen(false);
   }
+  resetMangaZoom();
+  document.documentElement.classList.remove("mobile-chrome-hidden");
   hideShotPopover();
   closeMangaTextBar();
   closeGrammarDrawer();
@@ -1262,6 +1312,180 @@ function attachCropGestureHandler() {
   });
 }
 
+function attachMangaTouchGestures() {
+  let touchMode = "none"; // "none" | "pinch" | "drag" | "swipe"
+  let pinchStartDist = 0;
+  let pinchStartZoom = 1;
+  let pinchStartMidX = 0;
+  let pinchStartMidY = 0;
+  let pinchStartPanX = 0;
+  let pinchStartPanY = 0;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let dragStartPanX = 0;
+  let dragStartPanY = 0;
+  let dragStartTime = 0;
+  let lastTapTime = 0;
+  let lastTapX = 0;
+  let lastTapY = 0;
+
+  const armSuppressClick = (ms = 280) => {
+    suppressNextMangaClick = true;
+    clearTimeout(suppressClickTimer);
+    suppressClickTimer = setTimeout(() => {
+      suppressNextMangaClick = false;
+    }, ms);
+  };
+
+  const getDist = (t1, t2) => Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+  const getMid = (t1, t2) => ({
+    x: (t1.clientX + t2.clientX) / 2,
+    y: (t1.clientY + t2.clientY) / 2,
+  });
+
+  mangaViewport.addEventListener(
+    "touchstart",
+    (e) => {
+      if (mangaView.hidden || !mangaDetail || cropMode || getLayoutMode() === "vertical") {
+        touchMode = "none";
+        return;
+      }
+      if (e.target.closest?.(".manga-ocr-box, #manga-text-bar, #manga-shot-popover, #manga-ocr-status")) {
+        touchMode = "none";
+        return;
+      }
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const mid = getMid(e.touches[0], e.touches[1]);
+        pinchStartDist = getDist(e.touches[0], e.touches[1]);
+        pinchStartZoom = mangaZoom;
+        pinchStartMidX = mid.x;
+        pinchStartMidY = mid.y;
+        pinchStartPanX = panX;
+        pinchStartPanY = panY;
+        touchMode = "pinch";
+        armSuppressClick(350);
+      } else if (e.touches.length === 1) {
+        const t = e.touches[0];
+        dragStartX = t.clientX;
+        dragStartY = t.clientY;
+        dragStartPanX = panX;
+        dragStartPanY = panY;
+        dragStartTime = Date.now();
+        touchMode = mangaZoom > 1.05 ? "drag" : "swipe";
+      }
+    },
+    { passive: false }
+  );
+
+  mangaViewport.addEventListener(
+    "touchmove",
+    (e) => {
+      if (touchMode === "none") return;
+      if (touchMode === "pinch" && e.touches.length >= 2) {
+        e.preventDefault();
+        const dist = getDist(e.touches[0], e.touches[1]);
+        const mid = getMid(e.touches[0], e.touches[1]);
+        mangaZoom = Math.max(
+          1.0,
+          Math.min(3.5, pinchStartZoom * (dist / Math.max(10, pinchStartDist)))
+        );
+        panX = pinchStartPanX + (mid.x - pinchStartMidX);
+        panY = pinchStartPanY + (mid.y - pinchStartMidY);
+        applyMangaTransform();
+        armSuppressClick(350);
+      } else if (touchMode === "drag" && e.touches.length === 1) {
+        e.preventDefault();
+        const t = e.touches[0];
+        const dx = t.clientX - dragStartX;
+        const dy = t.clientY - dragStartY;
+        panX = dragStartPanX + dx;
+        panY = dragStartPanY + dy;
+        applyMangaTransform();
+        if (Math.hypot(dx, dy) > 8) armSuppressClick(280);
+      } else if (touchMode === "swipe" && e.touches.length === 1) {
+        const t = e.touches[0];
+        const dx = t.clientX - dragStartX;
+        const dy = t.clientY - dragStartY;
+        if (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy)) {
+          e.preventDefault();
+        }
+      }
+    },
+    { passive: false }
+  );
+
+  const handleTouchEnd = (e) => {
+    if (touchMode === "none") return;
+    if (touchMode === "pinch") {
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        dragStartX = t.clientX;
+        dragStartY = t.clientY;
+        dragStartPanX = panX;
+        dragStartPanY = panY;
+        touchMode = mangaZoom > 1.05 ? "drag" : "none";
+        return;
+      }
+      if (e.touches.length === 0) {
+        touchMode = "none";
+        armSuppressClick(280);
+      }
+      return;
+    }
+
+    if (e.touches.length > 0) return;
+    const prevMode = touchMode;
+    touchMode = "none";
+    const t = e.changedTouches?.[0];
+    if (!t) return;
+
+    const dx = t.clientX - dragStartX;
+    const dy = t.clientY - dragStartY;
+    const dt = Date.now() - dragStartTime;
+    const now = Date.now();
+
+    if (prevMode === "swipe" && Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy) * 1.4 && dt < 600) {
+      armSuppressClick(320);
+      lastTapTime = 0;
+      stepManga(dx > 0 ? 1 : -1);
+      return;
+    }
+
+    if (Math.hypot(dx, dy) < 12 && dt < 280) {
+      const isDoubleTap =
+        now - lastTapTime < 280 && Math.hypot(t.clientX - lastTapX, t.clientY - lastTapY) < 32;
+      if (isDoubleTap) {
+        lastTapTime = 0;
+        armSuppressClick(340);
+        if (mangaZoom > 1.05) {
+          resetMangaZoom();
+        } else {
+          const vpRect = mangaViewport.getBoundingClientRect();
+          mangaZoom = 2.1;
+          panX = (vpRect.left + vpRect.width / 2 - t.clientX) * 1.1;
+          panY = (vpRect.top + vpRect.height / 2 - t.clientY) * 1.1;
+          applyMangaTransform();
+        }
+        return;
+      }
+      lastTapTime = now;
+      lastTapX = t.clientX;
+      lastTapY = t.clientY;
+      return;
+    }
+
+    if (prevMode === "drag" && Math.hypot(dx, dy) > 8) {
+      armSuppressClick(280);
+    }
+  };
+
+  mangaViewport.addEventListener("touchend", handleTouchEnd);
+  mangaViewport.addEventListener("touchcancel", () => {
+    touchMode = "none";
+  });
+}
+
 export function initManga({
   onBackToLibrary,
   onSaveNote,
@@ -1286,7 +1510,11 @@ export function initManga({
   });
   ro.observe(mangaViewport);
   window.addEventListener("resize", () => {
-    if (!mangaView.hidden) layoutVisiblePages();
+    if (!mangaView.hidden) {
+      resetMangaZoom();
+      applyToolbarLabels();
+      layoutVisiblePages();
+    }
   });
   document.addEventListener("fullscreenchange", () => {
     if (!document.fullscreenElement) pseudoFullscreen = false;
@@ -1326,7 +1554,12 @@ export function initManga({
   btnLayout.addEventListener("click", async () => {
     const cur = getLayoutMode();
     const nextLayout = MANGA_LAYOUTS[(MANGA_LAYOUTS.indexOf(cur) + 1) % MANGA_LAYOUTS.length];
-    await persistMangaPref({ manga_layout: nextLayout });
+    if (isMobileViewport()) {
+      localStorage.setItem(MOBILE_LAYOUT_STORAGE_KEY, nextLayout);
+      applyToolbarLabels();
+    } else {
+      await persistMangaPref({ manga_layout: nextLayout });
+    }
     renderStage();
     updateSpreadNavDisabled();
   });
@@ -1436,19 +1669,23 @@ export function initManga({
   });
   btnFullscreen.addEventListener("click", () => toggleMangaFullscreen());
 
-  // Click navigation in horizontal modes (Left = Next RTL, Right = Previous RTL)
+  // Click / tap navigation in horizontal modes (Left = Next RTL, Right = Previous RTL, Center = Mobile Chrome Toggle)
   mangaViewport.addEventListener("click", (e) => {
     if (mangaView.hidden || !mangaDetail) return;
     if (getLayoutMode() === "vertical") return;
-    if (cropMode || e.shiftKey || didJustDragCrop) return;
+    if (cropMode || e.shiftKey || didJustDragCrop || suppressNextMangaClick) return;
+    if (mangaZoom > 1.05) return;
     if (e.target.closest?.(".manga-ocr-box, #manga-text-bar, #manga-ocr-status, #manga-shot-popover")) return;
 
     const rect = mangaViewport.getBoundingClientRect();
     const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
-    if (relX < 0.35) {
+    if (relX < 0.3) {
       stepManga(1);
-    } else if (relX > 0.65) {
+    } else if (relX > 0.7) {
       stepManga(-1);
+    } else if (isMobileViewport() || window.matchMedia?.("(pointer: coarse)")?.matches) {
+      document.documentElement.classList.toggle("mobile-chrome-hidden");
+      requestAnimationFrame(layoutVisiblePages);
     }
   });
 
@@ -1582,6 +1819,7 @@ export function initManga({
   });
 
   attachCropGestureHandler();
+  attachMangaTouchGestures();
 
   document.addEventListener("keydown", (e) => {
     if (mangaView.hidden) return;

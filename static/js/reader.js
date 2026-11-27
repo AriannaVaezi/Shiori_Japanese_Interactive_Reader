@@ -150,7 +150,12 @@ function scheduleProgressSave() {
 
 export function hideSelectionTooltip() {
   selectionTooltip.hidden = true;
+  selectionTooltip.classList.remove("touch-docked");
   pendingSelection = null;
+}
+
+function isTouchOrNarrowViewport() {
+  return window.matchMedia?.("(pointer: coarse)")?.matches || window.innerWidth <= 768;
 }
 
 function applyTokenHighlights(troubleKeys, stickyKeys) {
@@ -463,16 +468,16 @@ export function initReader({
     }
   });
 
-  // Passage selection bar for Look Up, Chat, Grammar, or saving quotes/notes
-  document.addEventListener("mouseup", (e) => {
+  // Passage selection bar for Look Up, Chat, Grammar, or saving quotes/notes (mouse + touch)
+  let selDebounceTimer = null;
+  let touchingTooltip = false;
+
+  function inspectReaderSelection() {
     const inReader = !readerView.hidden;
     const inManga = mangaView && !mangaView.hidden;
     if (!inReader && !inManga) return;
     const activeContainer = inReader ? contentEl : mangaTokensEl;
-    if (!activeContainer || !activeContainer.contains(e.target)) {
-      if (!selectionTooltip.contains(e.target)) hideSelectionTooltip();
-      return;
-    }
+    if (!activeContainer) return;
 
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
@@ -481,6 +486,14 @@ export function initReader({
     }
 
     const range = sel.getRangeAt(0);
+    if (
+      !activeContainer.contains(range.startContainer) ||
+      !activeContainer.contains(range.endContainer)
+    ) {
+      hideSelectionTooltip();
+      return;
+    }
+
     const cleanTarget = extractRangeCleanText(range);
     if (
       cleanTarget.length < 1 ||
@@ -539,15 +552,68 @@ export function initReader({
     btnSelChat.hidden = cleanTarget.length > 400;
     btnSelAskGrammar.hidden = !(sentEl && cleanTarget.length <= 200);
     btnSelSaveNote.hidden = false;
-    selectionTooltip.hidden = false;
-    const tipRect = selectionTooltip.getBoundingClientRect();
-    const left = Math.min(
-      window.innerWidth - tipRect.width - 12,
-      Math.max(12, rect.left + rect.width / 2 - tipRect.width / 2)
-    );
-    const top = Math.max(60, rect.top - tipRect.height - 8);
-    selectionTooltip.style.left = `${Math.round(left)}px`;
-    selectionTooltip.style.top = `${Math.round(top)}px`;
+
+    if (isTouchOrNarrowViewport()) {
+      selectionTooltip.classList.add("touch-docked");
+      selectionTooltip.style.left = "";
+      selectionTooltip.style.top = "";
+      selectionTooltip.hidden = false;
+    } else {
+      selectionTooltip.classList.remove("touch-docked");
+      selectionTooltip.hidden = false;
+      const tipRect = selectionTooltip.getBoundingClientRect();
+      const left = Math.min(
+        window.innerWidth - tipRect.width - 12,
+        Math.max(12, rect.left + rect.width / 2 - tipRect.width / 2)
+      );
+      const top = Math.max(60, rect.top - tipRect.height - 8);
+      selectionTooltip.style.left = `${Math.round(left)}px`;
+      selectionTooltip.style.top = `${Math.round(top)}px`;
+    }
+  }
+
+  selectionTooltip.addEventListener("pointerdown", () => {
+    touchingTooltip = true;
+    setTimeout(() => {
+      touchingTooltip = false;
+    }, 350);
+  });
+  selectionTooltip.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+  });
+
+  document.addEventListener("mouseup", (e) => {
+    const inReader = !readerView.hidden;
+    const inManga = mangaView && !mangaView.hidden;
+    if (!inReader && !inManga) return;
+    const activeContainer = inReader ? contentEl : mangaTokensEl;
+    if (!activeContainer || !activeContainer.contains(e.target)) {
+      if (!selectionTooltip.contains(e.target)) hideSelectionTooltip();
+      return;
+    }
+    inspectReaderSelection();
+  });
+
+  document.addEventListener("selectionchange", () => {
+    const inReader = !readerView.hidden;
+    const inManga = mangaView && !mangaView.hidden;
+    if (!inReader && !inManga) return;
+    clearTimeout(selDebounceTimer);
+    selDebounceTimer = setTimeout(() => {
+      if (touchingTooltip) return;
+      inspectReaderSelection();
+    }, 160);
+  });
+
+  document.addEventListener("pointerdown", (e) => {
+    if (selectionTooltip.hidden) return;
+    if (selectionTooltip.contains(e.target)) return;
+    const inReader = !readerView.hidden;
+    const inManga = mangaView && !mangaView.hidden;
+    const activeContainer = inReader ? contentEl : mangaTokensEl;
+    if (activeContainer && !activeContainer.contains(e.target)) {
+      hideSelectionTooltip();
+    }
   });
 
   btnSelLookup.addEventListener("click", () => {

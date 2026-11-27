@@ -1,6 +1,6 @@
 :root {
   --font-ui: "Yu Gothic UI", "Meiryo UI", "Hiragino Sans", "Noto Sans JP", system-ui, -apple-system, sans-serif;
-  --font-book: "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", "Noto Serif JP", "MS PMincho", Georgia, serif;
+  --font-book: "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", "Shippori Mincho", "Noto Serif JP", "Noto Serif CJK JP", "MS PMincho", Georgia, serif;
   --reader-font-size: 20px;
 
   --bg: #f8f7f4;
@@ -1106,6 +1106,43 @@ html[data-hide-annotations="true"] .sent-ask-btn {
 .note-card-hl-btn[data-color="purple"],
 .note-inline-swatch-btn[data-hl-color="purple"] {
   background: var(--hl-purple-solid);
+}
+
+.selection-tooltip.touch-docked,
+.note-hl-popover.touch-docked {
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  top: auto;
+  max-width: none;
+  border-radius: 14px;
+  padding: 8px 10px;
+  justify-content: center;
+  gap: 6px;
+}
+
+.selection-tooltip.touch-docked .hl-swatch-btn,
+.note-hl-popover.touch-docked .hl-swatch-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.selection-tooltip.touch-docked .hl-unhighlight-btn {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+
+.selection-tooltip.touch-docked .sel-action-btn {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+@media (hover: none) {
+  .sent-ask-btn {
+    opacity: 0.42;
+  }
 }
 
 /* Grammar Side Drawer */
@@ -2290,6 +2327,15 @@ html[data-theme="dark"] .aged-badge {
 
 .manga-viewport.crop-active {
   cursor: crosshair;
+  touch-action: none;
+}
+
+.manga-viewport.mode-horizontal-manga {
+  touch-action: none;
+}
+
+.manga-viewport.is-zoomed {
+  overflow: hidden;
 }
 
 .manga-stage {
@@ -2314,6 +2360,8 @@ html[data-theme="dark"] .aged-badge {
   justify-content: center;
   gap: 0;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  transform-origin: center center;
+  will-change: transform;
 }
 
 .manga-stage.mode-vertical {
@@ -2605,5 +2653,126 @@ html.manga-fullscreen .manga-workspace {
   justify-content: flex-start;
   text-align: left;
   font-size: 12.5px;
+}
+
+/* Mobile & Touch Ergonomics (Phase 1) */
+html.mobile-chrome-hidden #manga-bar {
+  display: none;
+}
+
+html.mobile-chrome-hidden .manga-workspace {
+  height: 100dvh;
+}
+
+@media (max-width: 768px) {
+  #reader-view,
+  #manga-view {
+    height: 100dvh;
+  }
+
+  .topbar {
+    padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .brand .subtitle {
+    display: none;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .library-main {
+    padding: 16px 12px calc(32px + env(safe-area-inset-bottom));
+  }
+
+  .books-grid {
+    grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+    gap: 12px;
+  }
+
+  .reader-bar,
+  .manga-bar {
+    height: auto;
+    flex: 0 0 auto;
+    padding: calc(6px + env(safe-area-inset-top)) 10px 6px;
+    gap: 6px;
+  }
+
+  .reader-bar .reader-bar-right,
+  .manga-bar .reader-bar-right {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+  }
+
+  .reader-bar .reader-bar-right::-webkit-scrollbar {
+    display: none;
+  }
+
+  .reader-bar .btn,
+  .manga-bar .btn {
+    min-height: 36px;
+  }
+
+  .reader-content {
+    padding: 20px 16px calc(110px + env(safe-area-inset-bottom));
+  }
+
+  .chapter-footer {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+  }
+
+  .lookup-popover {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    width: 100%;
+    max-width: none;
+    max-height: 62dvh;
+    border-radius: 16px 16px 0 0;
+    padding: 16px 16px calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .grammar-drawer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    width: 100%;
+    height: 68dvh;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    z-index: 62;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .manga-text-bar {
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    width: calc(100vw - 16px);
+    padding: 10px 12px;
+  }
+
+  .modal-backdrop {
+    padding: 8px;
+  }
+
+  .modal-card {
+    max-height: 92dvh;
+  }
+
+  .quiz-choice-btn,
+  .match-tile {
+    min-height: 46px;
+  }
 }
 

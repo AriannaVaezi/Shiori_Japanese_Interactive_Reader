@@ -16,7 +16,8 @@ A local web app for learning Japanese by reading your own EPUB books and EPUB/CB
   - **Themes & Typography:** `Paper`, `Sepia`, and `Dark` themes, adjustable font size (`A-` / `A+`), **`Marks: Shown / Hidden`** (`H`) clean-view toggle (hides note highlights, grammar marks, and trouble underlines without deleting saved data), and automatic scroll-position + active-reading-time persistence per book.
 
 ### 1b. Manga Reader (`.epub` & `.cbz`)
-- **2-Page RTL Spreads, 1-Page Horizontal & 1-Page Vertical Modes (`V`):** Cycle anytime between authentic Japanese right-to-left **2-Page Spreads** (with automatic solo handling for wide spreads and a **`Cover: Solo` / `Cover: Paired`** offset toggle), focused **1-Page Horizontal** page-by-page navigation, and seamless **1-Page Vertical** scroll.
+- **2-Page RTL Spreads, 1-Page Horizontal & 1-Page Vertical Modes (`V`):** Cycle anytime between authentic Japanese right-to-left **2-Page Spreads** (with automatic solo handling for wide spreads and a **`Cover: Solo` / `Cover: Paired`** offset toggle), focused **1-Page Horizontal** page-by-page navigation (auto-defaulted on phone screens), and seamless **1-Page Vertical** scroll.
+- **Phone & Touch Controls:** Long-press text selections dock the lookup/highlight bar cleanly at the bottom edge away from Android’s native selection menu, lookup & grammar panels open as bottom sheets, horizontal manga views support **RTL swipe**, **pinch-to-zoom / double-tap zoom / pan**, and center-tap toolbar hiding (`#input-quiz-reading` disables mobile autocorrect), and Shiori includes an installable standalone **PWA manifest**.
 - **Original Aspect Ratio & Fullscreen (`F`):** Images always preserve their exact native aspect ratio without cropping or distortion. Enter **Fullscreen** (`F`) for an uncluttered dark view of the pages where the top toolbar auto-hides cleanly (hover the top edge to reveal) while word lookup popovers, grammar chat, and modals remain usable right over the artwork.
 - **100% Local Speech-Bubble & Crop OCR + Clean View (`H`) & Screenshot (`P`):** When optional `manga-ocr` extras are installed (`uv sync --extra manga-ocr`), OCR runs completely **locally on your CPU** via `mokuro` + `manga-ocr` using cached open-source weights (zero cloud OCR API calls, leaving GPU VRAM free for local LLMs) and caches clickable speech-bubble overlays in SQLite. You can also toggle **`Marks: Hidden`** (`H`) anytime for an unmarked view of the artwork (hiding note boxes, highlights, and speech-bubble overlays), export lossless PNG page/spread screenshots cleanly without overlays via **`📷 Screenshot`** (`P`, save to PNG or copy to clipboard), crop any box anytime with **`✂ Select Area`** (`C`) or **`Shift + Drag`**, inspect clickable `SudachiPy` tokens, edit OCR text inline if needed, highlight substrings for **`Look Up` / `Chat` / `? Grammar` / `★ Save`**, and click the left/right edges (`←` / `→` / `Space`) to turn pages.
 
@@ -172,6 +173,15 @@ uv run python run.py
 When `llama.cpp (Local)` is enabled with a local `.gguf` model, `run.py` automatically starts `llama-server` in the background (logged to `data/llama-server.log`) and shuts it down cleanly when you close the app.
 
 Open **`http://127.0.0.1:8000`** in your browser.
+
+### Testing on Your Phone Over Wi-Fi (`--lan`)
+To open Shiori on an Android phone on the same Wi-Fi network (and optionally tap **Add to Home screen** in Chrome for a standalone app-like window):
+
+```powershell
+uv run python run.py --lan
+```
+
+The terminal prints the `http://<your-PC-LAN-IP>:8000` link to open on your phone.
 
 ---
 
