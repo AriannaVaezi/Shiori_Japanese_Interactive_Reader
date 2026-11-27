@@ -17,11 +17,12 @@ class GrammarAskRequest(BaseModel):
     target_text: str = ""
     sentence_text: str = ""
     question: str = ""
+    mode: str = "grammar"
 
 
 @router.post("/ask")
 async def ask_grammar(req: GrammarAskRequest):
-    """Ask a grammar or nuance question about a sentence and save the conversation."""
+    """Ask a grammar, translation, or nuance question about a sentence and save the conversation."""
     return await grammar_service.ask_grammar(
         book_id=req.book_id,
         chapter_index=req.chapter_index,
@@ -29,6 +30,7 @@ async def ask_grammar(req: GrammarAskRequest):
         target_text=req.target_text,
         sentence_text=req.sentence_text,
         question=req.question,
+        mode=req.mode,
     )
 
 

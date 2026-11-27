@@ -2608,5 +2608,122 @@ def test_mobile_phase1_lan_launcher_pwa_and_touch_assets(temp_env):
         assert "html.mobile-chrome-hidden #manga-bar" in css_res.text
 
 
+def test_translate_in_context_screenshot_copy_and_lan_banner(temp_env, monkeypatch):
+    import importlib
+
+    run_mod = importlib.import_module("run")
+    banner_lan = run_mod.format_startup_banner("0.0.0.0", 8000, lan_ips=["192.168.1.198"])
+    assert "Open on your phone (same Wi-Fi): http://192.168.1.198:8000" in banner_lan
+    banner_local = run_mod.format_startup_banner("127.0.0.1", 8000, lan_ips=[])
+    assert "uv run python run.py --lan" in banner_local
+    ips = run_mod.detect_lan_ips()
+    assert isinstance(ips, list)
+
+    _build_sample_epub(config.BOOKS_DIR / "translate_test.epub")
+
+    captured_calls: list[tuple[str, list[dict[str, str]]]] = []
+
+    async def fake_generate_text(*, settings, system_prompt, messages, expect_json=False):
+        captured_calls.append((system_prompt, messages))
+        if "translator" in system_prompt.lower():
+            return ("It means she hurried toward the station in the morning breeze.", "llamacpp", "test-model")
+        return ("**Meaning in context:** Grammar breakdown response.", "llamacpp", "test-model")
+
+    monkeypatch.setattr(llm, "generate_text", fake_generate_text)
+
+    with TestClient(app) as client:
+        books_res = client.post("/api/books/scan")
+        assert books_res.status_code == 200
+        book1 = books_res.json()["books"][0]
+        book_id = book1["id"]
+        ch1_idx = next(c["chapter_index"] for c in book1["chapters"] if c["title"] == "１")
+        chap = client.get(f"/api/books/{book_id}/chapters/{ch1_idx}").json()
+        assert chap["chapter_index"] == ch1_idx
+        sent_id = f"c{ch1_idx}_s0"
+        sent_text = "駅前にはお店が立ち並ぶ商店街がある。"
+
+        # 1) Contextual translation mode
+        t1 = client.post(
+            "/api/grammar/ask",
+            json={
+                "book_id": book_id,
+                "chapter_index": ch1_idx,
+                "sent_id": sent_id,
+                "target_text": "お店が立ち並ぶ",
+                "sentence_text": sent_text,
+                "question": "",
+                "mode": "translate",
+            },
+        )
+        assert t1.status_code == 200
+        d1 = t1.json()
+        assert d1["llm_unavailable"] is False
+        assert d1["reused"] is False
+        assert "hurried toward the station" in d1["thread"]["messages"][-1]["content"]
+        assert d1["thread"]["messages"][-1]["mode"] == "translate"
+        assert "[Surrounding Context]" in captured_calls[-1][1][0]["content"]
+        assert "translator" in captured_calls[-1][0].lower()
+
+        # Re-clicking Translate without a follow-up question reuses the translate answer
+        t2 = client.post(
+            "/api/grammar/ask",
+            json={
+                "book_id": book_id,
+                "chapter_index": ch1_idx,
+                "sent_id": sent_id,
+                "target_text": "お店が立ち並ぶ",
+                "sentence_text": sent_text,
+                "question": "",
+                "mode": "translate",
+            },
+        )
+        assert t2.status_code == 200
+        assert t2.json()["reused"] is True
+        assert len(captured_calls) == 1
+
+        # Clicking ? Grammar on the same phrase runs grammar mode rather than returning translate-only reuse
+        g1 = client.post(
+            "/api/grammar/ask",
+            json={
+                "book_id": book_id,
+                "chapter_index": ch1_idx,
+                "sent_id": sent_id,
+                "target_text": "お店が立ち並ぶ",
+                "sentence_text": sent_text,
+                "question": "",
+                "mode": "grammar",
+            },
+        )
+        assert g1.status_code == 200
+        gd1 = g1.json()
+        assert gd1["reused"] is False
+        assert gd1["thread"]["messages"][-1]["mode"] == "grammar"
+        assert "Grammar breakdown response" in gd1["thread"]["messages"][-1]["content"]
+        assert len(captured_calls) == 2
+
+        # 2) Frontend buttons & Right/Left page copy controls
+        index_res = client.get("/")
+        assert index_res.status_code == 200
+        assert 'id="btn-sel-translate"' in index_res.text
+        assert 'id="btn-manga-bar-translate"' in index_res.text
+
+        manga_js = client.get("/static/js/manga.js")
+        assert manga_js.status_code == 200
+        assert "Right Page" in manga_js.text
+        assert "Left Page" in manga_js.text
+        assert "copyToClipboard: true" in manga_js.text
+        assert "btn-manga-bar-translate" in manga_js.text
+
+        reader_js = client.get("/static/js/reader.js")
+        assert reader_js.status_code == 200
+        assert "btn-sel-translate" in reader_js.text
+        assert 'mode: "translate"' in reader_js.text
+
+        grammar_js = client.get("/static/js/grammar.js")
+        assert grammar_js.status_code == 200
+        assert "Translating in context" in grammar_js.text
+
+
+
 
 

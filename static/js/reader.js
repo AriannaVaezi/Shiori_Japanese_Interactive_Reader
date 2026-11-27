@@ -43,6 +43,7 @@ const viewport = document.getElementById("reader-viewport");
 const contentEl = document.getElementById("reader-content");
 const selectionTooltip = document.getElementById("selection-tooltip");
 const btnSelLookup = document.getElementById("btn-sel-lookup");
+const btnSelTranslate = document.getElementById("btn-sel-translate");
 const btnSelChat = document.getElementById("btn-sel-chat");
 const btnSelSaveNote = document.getElementById("btn-sel-save-note");
 const btnSelAskGrammar = document.getElementById("btn-sel-ask-grammar");
@@ -508,13 +509,22 @@ export function initReader({
     const startEl = startNode.nodeType === Node.ELEMENT_NODE ? startNode : startNode.parentElement;
     const common = range.commonAncestorContainer;
     const commonEl = common.nodeType === Node.ELEMENT_NODE ? common : common.parentElement;
-    let sentEl = commonEl?.closest?.(".sent") || startEl?.closest?.(".sent") || null;
-    if (inReader && !sentEl && typeof range.intersectsNode === "function") {
-      sentEl = [...contentEl.querySelectorAll(".sent")].find((el) => range.intersectsNode(el)) || null;
+    let intersectingSents = [];
+    if (inReader && typeof range.intersectsNode === "function") {
+      intersectingSents = [...contentEl.querySelectorAll(".sent")].filter((el) =>
+        range.intersectsNode(el)
+      );
     }
+    let sentEl = commonEl?.closest?.(".sent") || startEl?.closest?.(".sent") || intersectingSents[0] || null;
     const resolvedSentId = inManga
       ? mangaTokensEl?.dataset.sentId || null
       : sentEl?.dataset.sentId || null;
+    const sentenceContextText =
+      intersectingSents.length > 1
+        ? intersectingSents.map((el) => extractCleanText(el)).join(" ")
+        : sentEl
+          ? extractCleanText(sentEl)
+          : cleanTarget;
 
     const touchedNoteIds = new Set();
     if (typeof range.intersectsNode === "function") {
@@ -542,13 +552,14 @@ export function initReader({
     };
     pendingSelection = {
       sentId: resolvedSentId,
-      sentenceText: sentEl ? extractCleanText(sentEl) : cleanTarget,
+      sentenceText: sentenceContextText,
       targetText: cleanTarget,
       touchedNoteIds: [...touchedNoteIds],
       anchorRect,
     };
 
     btnSelLookup.hidden = cleanTarget.length > 40;
+    if (btnSelTranslate) btnSelTranslate.hidden = cleanTarget.length > 800;
     btnSelChat.hidden = cleanTarget.length > 400;
     btnSelAskGrammar.hidden = !(sentEl && cleanTarget.length <= 200);
     btnSelSaveNote.hidden = false;
@@ -626,6 +637,21 @@ export function initReader({
       sentId: payload.sentId,
       sentenceText: payload.sentenceText,
       anchorRect: payload.anchorRect,
+    });
+  });
+
+  btnSelTranslate?.addEventListener("click", () => {
+    if (!pendingSelection) return;
+    const payload = { ...pendingSelection };
+    hideSelectionTooltip();
+    window.getSelection()?.removeAllRanges();
+    closeLookup();
+    openGrammarForSentence({
+      sentId: payload.sentId || "selection",
+      sentenceText: payload.sentenceText,
+      targetText: payload.targetText,
+      autoAsk: true,
+      mode: "translate",
     });
   });
 

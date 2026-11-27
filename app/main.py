@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
@@ -45,6 +46,12 @@ async def lifespan(_app: FastAPI):
     llamacpp_manager.start_managed_server_async(db.get_all_settings())
     books_service.scan_books_folder()
     manga_service.scan_manga_folder()
+    bind_host = os.environ.get("SHIORI_BIND_HOST")
+    if bind_host:
+        import run
+
+        bind_port = int(os.environ.get("SHIORI_BIND_PORT") or "8000")
+        print(run.format_startup_banner(bind_host, bind_port), flush=True)
     try:
         yield
     finally:

@@ -20,6 +20,17 @@ Example format:
 - **涼しく感じた**: adverbial `涼しく` + `感じた` ("felt cool").
 - **Nuance:** Calm, reflective tone fitting a quiet opening scene."""
 
+_TRANSLATE_SYSTEM_PROMPT = """You are a precise, natural Japanese-to-English translator helping a learner understand a passage while reading a novel or manga.
+
+Rules:
+- Write your entire response strictly in clear, natural English (NEVER use Chinese).
+- Focus directly on giving the accurate meaning of the highlighted Japanese text **in the context of the surrounding scene** (resolving implied subjects, speaker tone, idioms, or omitted pronouns from `[Surrounding Context]`).
+- Keep the response brief and scannable so the learner can keep reading; do not give a long grammar lecture unless asked.
+
+Format:
+**In-Context Translation:** <natural English translation of the highlighted portion as meant in this scene>
+- **Context & Nuance:** 1–3 concise bullets explaining implied subject/speaker, tone, idiom, or literal wording if non-obvious."""
+
 
 def _load_sentence_context(
     book_id: int,
@@ -128,15 +139,22 @@ async def ask_grammar(
     target_text: str = "",
     sentence_text: str = "",
     question: str = "",
+    mode: str = "grammar",
 ) -> dict[str, Any]:
-    """Ask a grammar/nuance question about a sentence and persist the thread."""
+    """Ask a grammar, translation, or nuance question about a sentence and persist the thread."""
+    norm_mode = "translate" if (mode or "").strip().lower() == "translate" else "grammar"
     clean_target = (target_text or "").strip()
+    clean_sentence_input = (sentence_text or "").strip()
     resolved_sentence, context_text = _load_sentence_context(
-        book_id, chapter_index, sent_id, fallback_sentence=sentence_text
+        book_id, chapter_index, sent_id, fallback_sentence=clean_sentence_input or clean_target
     )
     if not resolved_sentence:
-        resolved_sentence = sentence_text.strip()
+        resolved_sentence = clean_sentence_input or clean_target
         context_text = resolved_sentence
+    elif clean_sentence_input and len(clean_sentence_input) > len(resolved_sentence):
+        resolved_sentence = clean_sentence_input
+        if resolved_sentence not in context_text:
+            context_text = f"{context_text}\n>>> {resolved_sentence}".strip()
 
     with db.get_conn() as conn:
         existing = conn.execute(
@@ -152,26 +170,46 @@ async def ask_grammar(
     )
     clean_question = (question or "").strip()
 
-    # If the user clicked ? without typing a follow-up and a thread already exists, return it
-    if existing and not clean_question and prior_messages:
+    has_requested_mode = (
+        any(m.get("mode") == "translate" for m in prior_messages)
+        if norm_mode == "translate"
+        else any(m.get("mode", "grammar") == "grammar" for m in prior_messages)
+    )
+
+    # If the user clicked ? or Translate without typing a follow-up and this mode already ran, return it
+    if existing and not clean_question and prior_messages and has_requested_mode:
         return {
             "llm_unavailable": False,
             "reused": True,
             "thread": _row_to_thread(existing),
         }
 
-    if not prior_messages:
-        focus_line = f"Focus phrase: 「{clean_target}」\n" if clean_target else ""
+    focus_line = f"Focus phrase: 「{clean_target}」\n" if clean_target else ""
+    if clean_question:
+        ask_line = clean_question
+        display_user_msg = clean_question
+    elif norm_mode == "translate":
         ask_line = (
-            clean_question
-            if clean_question
-            else "In concise English only (no Chinese), translate this sentence in context and break down the key grammar, particles, conjugations, and nuance."
+            f"In natural English only (no Chinese), translate and explain the meaning of the highlighted portion 「{clean_target}」 in the context of this scene."
+            if clean_target
+            else "In natural English only (no Chinese), translate and explain the meaning of this sentence in the context of this scene."
         )
-        display_user_msg = clean_question or (
+        display_user_msg = (
+            f'Translate "{clean_target}" in context.'
+            if clean_target
+            else "Translate this sentence in context."
+        )
+    else:
+        ask_line = (
+            "In concise English only (no Chinese), translate this sentence in context and break down the key grammar, particles, conjugations, and nuance."
+        )
+        display_user_msg = (
             f'Explain the grammar and nuance of "{clean_target}" in this sentence.'
             if clean_target
             else "Break down the grammar and nuance of this sentence."
         )
+
+    if not prior_messages:
         llm_prompt = (
             f"[Surrounding Context]\n{context_text}\n\n"
             f"[Target Sentence]\n{resolved_sentence}\n"
@@ -180,7 +218,6 @@ async def ask_grammar(
         )
         llm_messages = [{"role": "user", "content": llm_prompt}]
     else:
-        display_user_msg = clean_question
         # Rebuild full context on turn 1 so follow-ups retain passage awareness
         first_user = (
             f"[Surrounding Context]\n{context_text}\n\n"
@@ -191,13 +228,16 @@ async def ask_grammar(
         llm_messages = [{"role": "user", "content": first_user}]
         for msg in prior_messages[1:]:
             llm_messages.append({"role": msg["role"], "content": msg["content"]})
-        llm_messages.append({"role": "user", "content": display_user_msg})
+        llm_messages.append({"role": "user", "content": ask_line})
 
+    system_prompt = (
+        _TRANSLATE_SYSTEM_PROMPT if norm_mode == "translate" else _GRAMMAR_SYSTEM_PROMPT
+    )
     settings = db.get_all_settings()
     try:
         answer_text, provider, model = await llm.generate_text(
             settings=settings,
-            system_prompt=_GRAMMAR_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             messages=llm_messages,
             expect_json=False,
         )
@@ -226,10 +266,11 @@ async def ask_grammar(
     now = db.utc_now_iso()
     updated_messages = [
         *prior_messages,
-        {"role": "user", "content": display_user_msg, "created_at": now},
+        {"role": "user", "content": display_user_msg, "mode": norm_mode, "created_at": now},
         {
             "role": "assistant",
             "content": answer_text,
+            "mode": norm_mode,
             "provider": provider,
             "model": model,
             "created_at": now,

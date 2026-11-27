@@ -2638,21 +2638,41 @@ html.manga-fullscreen .manga-workspace {
   position: fixed;
   top: 62px;
   right: 16px;
-  width: 245px;
+  width: 286px;
+  max-width: calc(100vw - 24px);
   z-index: 60;
 }
 
 .manga-shot-actions {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
-.manga-shot-opt {
-  width: 100%;
-  justify-content: flex-start;
-  text-align: left;
+.manga-shot-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.manga-shot-row-label {
   font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.manga-shot-row-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.manga-shot-btn {
+  padding: 5px 9px;
+  font-size: 12px;
 }
 
 /* Mobile & Touch Ergonomics (Phase 1) */

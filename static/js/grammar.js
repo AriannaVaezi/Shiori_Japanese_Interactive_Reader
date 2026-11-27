@@ -56,7 +56,7 @@ function updateCountsAndSentenceMarks() {
   });
 }
 
-function renderMessages(messages, pending = false) {
+function renderMessages(messages, pending = false, pendingMode = "grammar") {
   messagesEl.replaceChildren();
   for (const msg of messages || []) {
     const bubble = document.createElement("div");
@@ -80,7 +80,10 @@ function renderMessages(messages, pending = false) {
   if (pending) {
     const load = document.createElement("div");
     load.className = "grammar-msg assistant loading-line";
-    load.textContent = "Analyzing grammar and context…";
+    load.textContent =
+      pendingMode === "translate"
+        ? "Translating in context…"
+        : "Analyzing grammar and context…";
     messagesEl.appendChild(load);
   }
 
@@ -191,8 +194,9 @@ function openThreadInDrawer(thread) {
   renderMessages(thread.messages || []);
 }
 
-async function submitQuestion(questionText) {
+async function submitQuestion(questionText, mode = "grammar") {
   if (!activeContext || isAsking) return;
+  const normMode = mode === "translate" ? "translate" : "grammar";
   isAsking = true;
   btnSend.disabled = true;
   statusNote.hidden = true;
@@ -204,8 +208,15 @@ async function submitQuestion(questionText) {
   const currentMsgs = existing ? [...existing.messages] : [];
   if (questionText) {
     currentMsgs.push({ role: "user", content: questionText });
+  } else if (normMode === "translate") {
+    currentMsgs.push({
+      role: "user",
+      content: activeContext.targetText
+        ? `Translate "${activeContext.targetText}" in context.`
+        : "Translate this sentence in context.",
+    });
   }
-  renderMessages(currentMsgs, true);
+  renderMessages(currentMsgs, true, normMode);
 
   try {
     const res = await api.askGrammar({
@@ -215,6 +226,7 @@ async function submitQuestion(questionText) {
       target_text: activeContext.targetText,
       sentence_text: activeContext.sentenceText,
       question: questionText,
+      mode: normMode,
     });
 
     if (res.llm_unavailable) {
@@ -260,21 +272,32 @@ export async function openGrammarForSentence({
   sentenceText,
   targetText = "",
   autoAsk = true,
+  mode = "grammar",
 }) {
   const bookId = state.currentBook?.id;
   const chapterIndex = state.currentChapter?.chapter_index;
   if (bookId == null || chapterIndex == null) return;
 
+  const normMode = mode === "translate" ? "translate" : "grammar";
   const cleanTarget = (targetText || "").trim();
   const existing = state.grammarThreads.find(
     (t) => t.sent_id === sentId && t.target_text === cleanTarget
   );
 
   if (existing && existing.messages?.length) {
+    const hasRequestedMode =
+      normMode === "translate"
+        ? existing.messages.some((m) => m.mode === "translate")
+        : existing.messages.some((m) => (m.mode || "grammar") === "grammar");
     openThreadInDrawer(existing);
     if (!autoAsk) {
       requestAnimationFrame(() => input.focus());
+      return;
     }
+    if (hasRequestedMode) {
+      return;
+    }
+    await submitQuestion("", normMode);
     return;
   }
 
@@ -309,7 +332,7 @@ export async function openGrammarForSentence({
     return;
   }
 
-  await submitQuestion("");
+  await submitQuestion("", normMode);
 }
 
 export function dockGrammarDrawer(workspaceEl) {

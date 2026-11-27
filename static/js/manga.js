@@ -56,6 +56,7 @@ const textTokensEl = document.getElementById("manga-text-tokens");
 const textEditWrap = document.getElementById("manga-text-edit-wrap");
 const textEditInput = document.getElementById("manga-text-edit-input");
 const btnEditApply = document.getElementById("btn-manga-edit-apply");
+const btnBarTranslate = document.getElementById("btn-manga-bar-translate");
 const btnBarChat = document.getElementById("btn-manga-bar-chat");
 const btnBarGrammar = document.getElementById("btn-manga-bar-grammar");
 const btnBarSave = document.getElementById("btn-manga-bar-save");
@@ -580,13 +581,18 @@ async function captureMangaScreenshot(visualPages, { copyToClipboard = false } =
       `shiori_manga_${suffix}.png`
     );
 
-    if (copyToClipboard && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
-      try {
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-        setOcrStatus(`Copied ${label} image to clipboard`, 2400);
-        return;
-      } catch {
-        // Fall back to file download if clipboard permission/support fails
+    let clipboardFallback = false;
+    if (copyToClipboard) {
+      if (navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+          setOcrStatus(`Copied ${label} image to clipboard`, 2400);
+          return;
+        } catch {
+          clipboardFallback = true;
+        }
+      } else {
+        clipboardFallback = true;
       }
     }
 
@@ -598,7 +604,10 @@ async function captureMangaScreenshot(visualPages, { copyToClipboard = false } =
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(objUrl), 2500);
-    setOcrStatus(`Saved screenshot: ${filename}`, 2600);
+    setOcrStatus(
+      clipboardFallback ? `Clipboard unavailable here — saved ${filename}` : `Saved screenshot: ${filename}`,
+      2600
+    );
   } catch (err) {
     setOcrStatus(`Screenshot failed: ${err.message}`, 3500);
   }
@@ -610,35 +619,51 @@ function populateShotPopover() {
   const visible = getVisibleScreenshotPages();
   if (!visible.length) return;
 
-  const addOption = (label, onClick, primary = false) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = primary ? "btn btn-primary manga-shot-opt" : "btn btn-secondary manga-shot-opt";
-    b.textContent = label;
-    b.addEventListener("click", onClick);
-    shotActionsEl.appendChild(b);
+  const addRow = (title, pages, primarySave = false) => {
+    const row = document.createElement("div");
+    row.className = "manga-shot-row";
+
+    const lbl = document.createElement("span");
+    lbl.className = "manga-shot-row-label";
+    lbl.textContent = title;
+
+    const btns = document.createElement("div");
+    btns.className = "manga-shot-row-btns";
+
+    const saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = primarySave ? "btn btn-primary manga-shot-btn" : "btn btn-secondary manga-shot-btn";
+    saveBtn.textContent = "⬇ Save";
+    saveBtn.title = `Save ${title} (PNG)`;
+    saveBtn.setAttribute("aria-label", `Save ${title}`);
+    saveBtn.addEventListener("click", () =>
+      captureMangaScreenshot(pages, { copyToClipboard: false })
+    );
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "btn btn-secondary manga-shot-btn";
+    copyBtn.textContent = "📋 Copy";
+    copyBtn.title = `Copy ${title} to Clipboard`;
+    copyBtn.setAttribute("aria-label", `Copy ${title}`);
+    copyBtn.addEventListener("click", () =>
+      captureMangaScreenshot(pages, { copyToClipboard: true })
+    );
+
+    btns.append(saveBtn, copyBtn);
+    row.append(lbl, btns);
+    shotActionsEl.appendChild(row);
   };
 
   if (visible.length === 2) {
     const [leftIdx, rightIdx] = visible;
     const low = Math.min(leftIdx, rightIdx) + 1;
     const high = Math.max(leftIdx, rightIdx) + 1;
-    addOption(`⬇ Save Spread (p.${low}–${high})`, () => captureMangaScreenshot(visible), true);
-    addOption("📋 Copy Spread to Clipboard", () =>
-      captureMangaScreenshot(visible, { copyToClipboard: true })
-    );
-    addOption(`⬇ Save Right Page (p.${rightIdx + 1})`, () =>
-      captureMangaScreenshot([rightIdx])
-    );
-    addOption(`⬇ Save Left Page (p.${leftIdx + 1})`, () =>
-      captureMangaScreenshot([leftIdx])
-    );
+    addRow(`Spread (p.${low}–${high})`, visible, true);
+    addRow(`Right Page (p.${rightIdx + 1})`, [rightIdx], false);
+    addRow(`Left Page (p.${leftIdx + 1})`, [leftIdx], false);
   } else {
-    const pNum = visible[0] + 1;
-    addOption(`⬇ Save Page ${pNum} (PNG)`, () => captureMangaScreenshot(visible), true);
-    addOption(`📋 Copy Page ${pNum} to Clipboard`, () =>
-      captureMangaScreenshot(visible, { copyToClipboard: true })
-    );
+    addRow(`Page ${visible[0] + 1}`, visible, true);
   }
 }
 
@@ -1732,6 +1757,19 @@ export function initManga({
       e.preventDefault();
       applyEditedText();
     }
+  });
+
+  btnBarTranslate?.addEventListener("click", () => {
+    if (!activeInspector) return;
+    closeLookup();
+    hideSelectionTooltip();
+    openGrammarForSentence({
+      sentId: activeInspector.sentId,
+      sentenceText: activeInspector.text,
+      targetText: activeInspector.text,
+      autoAsk: true,
+      mode: "translate",
+    });
   });
 
   btnBarChat.addEventListener("click", () => {
