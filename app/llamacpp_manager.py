@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 from urllib.parse import urlparse
 
 import httpx
@@ -187,38 +187,47 @@ class ManagedLlamaServer:
         self.log_path = log_path or (config.DATA_DIR / "llama-server.log")
         self.proc: subprocess.Popen[bytes] | None = None
         self._log_file: IO[bytes] | None = None
+        self._target_url: str = ""
+        self._api_key: str = ""
+        self._alias: str = ""
+        self.last_error: str = ""
 
     def is_running(self) -> bool:
         """Return True if the managed subprocess is currently alive."""
         return self.proc is not None and self.proc.poll() is None
 
-    def start_if_needed(self, wait_timeout: float = 45.0) -> bool:
-        """Start `llama-server` when configured for local auto-start and not yet running."""
+    def launch(self) -> tuple[bool, str]:
+        """Spawn `llama-server` without blocking on model load."""
+        self.last_error = ""
         target = _parse_autostart_target(self.settings)
         if target is None:
-            return False
+            return False, ""
         url, host, port = target
 
         if is_port_open(host, port):
             print(f"[llama.cpp] Server already listening at {url}")
-            return False
+            return False, ""
 
         binary = find_llama_server_binary()
         if binary is None:
-            print(
-                "[llama.cpp] `llama-server` not found. Install via "
+            msg = (
+                "`llama-server` not found. Install via "
                 "`winget install --id ggml.llamacpp --exact` or disable auto-start in Settings."
             )
-            return False
+            print(f"[llama.cpp] {msg}")
+            self.last_error = msg
+            return False, msg
 
         model_path = resolve_model_path(self.settings.get("llamacpp_model_path", ""))
         if model_path is None:
             hint_dir = default_models_dirs()[0]
-            print(
-                f"[llama.cpp] No .gguf model found. Put one in {hint_dir} "
+            msg = (
+                f"No .gguf model found. Put one in {hint_dir} "
                 "or set the GGUF path in Settings."
             )
-            return False
+            print(f"[llama.cpp] {msg}")
+            self.last_error = msg
+            return False, msg
 
         alias = self.settings.get("llamacpp_model", "").strip() or model_path.stem
         api_key = self.settings.get("llamacpp_api_key", "").strip()
@@ -255,30 +264,56 @@ class ManagedLlamaServer:
             )
         except OSError as exc:
             log_handle.close()
-            print(f"[llama.cpp] Failed to launch llama-server: {exc}")
-            return False
-        self._log_file = log_handle
+            msg = f"Failed to launch llama-server: {exc}"
+            print(f"[llama.cpp] {msg}")
+            self.last_error = msg
+            return False, msg
 
+        self._log_file = log_handle
+        self._target_url = url
+        self._api_key = api_key
+        self._alias = alias
         print(f"[llama.cpp] Starting llama-server ({alias}) at {url}...")
-        deadline = time.monotonic() + wait_timeout
-        while time.monotonic() < deadline:
+        return True, ""
+
+    def wait_until_ready(self, wait_timeout: float = 45.0) -> bool:
+        """Poll the launched subprocess until `/health` or `/v1/models` succeeds or it exits."""
+        if self.proc is None or not self._target_url:
+            return False
+        deadline = time.monotonic() + max(0.0, wait_timeout)
+        while True:
+            if self.proc is None:
+                return False
             if self.proc.poll() is not None:
                 exit_code = self.proc.returncode
                 self.stop()
                 tail = _read_log_tail(self.log_path, lines=10)
-                print(f"[llama.cpp] llama-server exited early (code {exit_code}).")
+                msg = f"llama-server exited early (code {exit_code})."
+                self.last_error = msg
+                print(f"[llama.cpp] {msg}")
                 if tail:
                     print(tail)
                 return False
-            if is_server_ready(url, api_key=api_key):
-                print(f"[llama.cpp] Ready at {url} (model: {alias})")
+            if is_server_ready(self._target_url, api_key=self._api_key):
+                self.last_error = ""
+                print(f"[llama.cpp] Ready at {self._target_url} (model: {self._alias})")
                 return True
+            if time.monotonic() >= deadline:
+                print(
+                    f"[llama.cpp] Still loading in background (see {self.log_path}); starting Shiori..."
+                )
+                return False
             time.sleep(0.5)
 
-        print(
-            f"[llama.cpp] Still loading in background (see {self.log_path}); starting Shiori..."
-        )
-        return True
+    def start_if_needed(self, wait_timeout: float = 45.0) -> bool:
+        """Start `llama-server` when configured for local auto-start and not yet running."""
+        launched, _ = self.launch()
+        if not launched:
+            return False
+        if wait_timeout <= 0:
+            return True
+        ready = self.wait_until_ready(wait_timeout=wait_timeout)
+        return ready or self.is_running()
 
     def stop(self) -> None:
         """Terminate the managed `llama-server` subprocess and close its log file."""
@@ -308,7 +343,30 @@ class ManagedLlamaServer:
 _MANAGER_LOCK = threading.Lock()
 _MANAGED_SERVER: ManagedLlamaServer | None = None
 _MANAGED_SIGNATURE: tuple[str, int, str, str, str] | None = None
+_MANAGED_MODEL: str = ""
+_STARTING: bool = False
+_LAST_ERROR: str = ""
+_START_THREAD: threading.Thread | None = None
 _ATEXIT_REGISTERED = False
+
+
+def _watch_readiness(mgr: ManagedLlamaServer, wait_timeout: float = 90.0) -> None:
+    global _STARTING, _LAST_ERROR
+    try:
+        mgr.wait_until_ready(wait_timeout=max(1.0, wait_timeout))
+    finally:
+        with _MANAGER_LOCK:
+            if _MANAGED_SERVER is mgr:
+                _STARTING = False
+                if mgr.last_error:
+                    _LAST_ERROR = mgr.last_error
+
+
+def _tests_block_autostart(allow_in_tests: bool) -> bool:
+    return not allow_in_tests and bool(
+        os.environ.get("PYTEST_CURRENT_TEST")
+        or os.environ.get("SHIORI_DISABLE_LLAMACPP_AUTOSTART") == "1"
+    )
 
 
 def ensure_managed_server_running(
@@ -318,12 +376,9 @@ def ensure_managed_server_running(
     allow_in_tests: bool = False,
 ) -> bool:
     """Start or reuse a managed local `llama-server` matching `settings`."""
-    global _MANAGED_SERVER, _MANAGED_SIGNATURE, _ATEXIT_REGISTERED
+    global _MANAGED_SERVER, _MANAGED_SIGNATURE, _MANAGED_MODEL, _STARTING, _LAST_ERROR, _ATEXIT_REGISTERED
 
-    if not allow_in_tests and (
-        os.environ.get("PYTEST_CURRENT_TEST")
-        or os.environ.get("SHIORI_DISABLE_LLAMACPP_AUTOSTART") == "1"
-    ):
+    if _tests_block_autostart(allow_in_tests):
         return False
 
     target = _parse_autostart_target(settings)
@@ -333,47 +388,216 @@ def ensure_managed_server_running(
 
     model_path = resolve_model_path(settings.get("llamacpp_model_path", ""))
     if model_path is None:
+        with _MANAGER_LOCK:
+            _STARTING = False
+            _LAST_ERROR = f"No .gguf model found in {default_models_dirs()[0]}"
         return False
 
     alias = settings.get("llamacpp_model", "").strip() or model_path.stem
     api_key = settings.get("llamacpp_api_key", "").strip()
     signature = (host, port, str(model_path), alias, api_key)
 
+    mgr: ManagedLlamaServer | None = None
     with _MANAGER_LOCK:
         if _MANAGED_SERVER is not None and _MANAGED_SERVER.is_running():
             if _MANAGED_SIGNATURE == signature:
-                if is_server_ready(url, api_key=api_key):
+                mgr = _MANAGED_SERVER
+            else:
+                _MANAGED_SERVER.stop()
+                _MANAGED_SERVER = None
+                _MANAGED_SIGNATURE = None
+                _MANAGED_MODEL = ""
+
+        if mgr is None:
+            if is_port_open(host, port):
+                _STARTING = False
+                _LAST_ERROR = ""
+                return True
+
+            candidate = ManagedLlamaServer(settings)
+            launched, err = candidate.launch()
+            if not launched:
+                if is_port_open(host, port):
+                    _STARTING = False
+                    _LAST_ERROR = ""
                     return True
-                deadline = time.monotonic() + min(wait_timeout, 15.0)
-                while time.monotonic() < deadline and _MANAGED_SERVER.is_running():
-                    if is_server_ready(url, api_key=api_key):
-                        return True
-                    time.sleep(0.5)
-                return _MANAGED_SERVER.is_running()
-            _MANAGED_SERVER.stop()
-            _MANAGED_SERVER = None
-            _MANAGED_SIGNATURE = None
+                _STARTING = False
+                if err:
+                    _LAST_ERROR = err
+                return False
 
-        if is_port_open(host, port):
-            return True
-
-        mgr = ManagedLlamaServer(settings)
-        started = mgr.start_if_needed(wait_timeout=wait_timeout)
-        if started and mgr.is_running():
-            _MANAGED_SERVER = mgr
+            _MANAGED_SERVER = candidate
             _MANAGED_SIGNATURE = signature
+            _MANAGED_MODEL = alias
+            _STARTING = True
+            _LAST_ERROR = ""
             if not _ATEXIT_REGISTERED:
                 atexit.register(stop_managed_server)
                 _ATEXIT_REGISTERED = True
-            return True
+            mgr = candidate
+
+    if is_server_ready(url, api_key=api_key, timeout=0.6):
+        with _MANAGER_LOCK:
+            if _MANAGED_SERVER is mgr:
+                _STARTING = False
+                _LAST_ERROR = ""
+        return True
+
+    if wait_timeout <= 0:
+        threading.Thread(
+            target=_watch_readiness,
+            args=(mgr, 90.0),
+            daemon=True,
+        ).start()
+        return mgr.is_running()
+
+    ready = mgr.wait_until_ready(wait_timeout=wait_timeout)
+    with _MANAGER_LOCK:
+        if _MANAGED_SERVER is mgr:
+            _STARTING = False
+            if mgr.last_error:
+                _LAST_ERROR = mgr.last_error
+    return ready or mgr.is_running()
+
+
+def _run_async_start(
+    settings: dict[str, str],
+    wait_timeout: float,
+    allow_in_tests: bool,
+) -> None:
+    global _START_THREAD, _STARTING
+    try:
+        ensure_managed_server_running(
+            settings,
+            wait_timeout=wait_timeout,
+            allow_in_tests=allow_in_tests,
+        )
+    finally:
+        with _MANAGER_LOCK:
+            _START_THREAD = None
+            if _MANAGED_SERVER is None or not _MANAGED_SERVER.is_running():
+                _STARTING = False
+
+
+def start_managed_server_async(
+    settings: dict[str, str],
+    wait_timeout: float = 90.0,
+    *,
+    allow_in_tests: bool = False,
+) -> bool:
+    """Kick off managed `llama-server` startup on a background daemon thread."""
+    global _START_THREAD, _STARTING, _LAST_ERROR
+
+    if _tests_block_autostart(allow_in_tests):
         return False
+
+    if _parse_autostart_target(settings) is None:
+        return False
+
+    snapshot = dict(settings)
+    with _MANAGER_LOCK:
+        if _START_THREAD is not None and _START_THREAD.is_alive():
+            return True
+        if _MANAGED_SERVER is not None and _MANAGED_SERVER.is_running():
+            return True
+        _STARTING = True
+        _LAST_ERROR = ""
+        t = threading.Thread(
+            target=_run_async_start,
+            args=(snapshot, wait_timeout, allow_in_tests),
+            daemon=True,
+        )
+        _START_THREAD = t
+        t.start()
+        return True
 
 
 def stop_managed_server() -> None:
     """Stop any managed local `llama-server` started by this process."""
-    global _MANAGED_SERVER, _MANAGED_SIGNATURE
+    global _MANAGED_SERVER, _MANAGED_SIGNATURE, _MANAGED_MODEL, _STARTING
     with _MANAGER_LOCK:
         if _MANAGED_SERVER is not None:
             _MANAGED_SERVER.stop()
             _MANAGED_SERVER = None
             _MANAGED_SIGNATURE = None
+            _MANAGED_MODEL = ""
+        _STARTING = False
+
+
+def get_status(settings: dict[str, str]) -> dict[str, Any]:
+    """Return non-blocking status metadata for the currently configured LLM provider."""
+    provider = (settings.get("llm_provider") or "llamacpp").strip().lower()
+    if provider == "llamacpp":
+        url = (settings.get("llamacpp_url") or "http://127.0.0.1:8080").strip()
+        api_key = (settings.get("llamacpp_api_key") or "").strip()
+        with _MANAGER_LOCK:
+            managed = _MANAGED_SERVER is not None and _MANAGED_SERVER.is_running()
+            starting = _STARTING
+            last_error = _LAST_ERROR
+            managed_model = _MANAGED_MODEL
+        model = (settings.get("llamacpp_model") or "").strip() or managed_model
+
+        if is_server_ready(url, api_key=api_key, timeout=0.6):
+            return {
+                "provider": "llamacpp",
+                "status": "ready",
+                "model": model or "local model",
+                "detail": f"Connected at {url}",
+                "managed": managed,
+            }
+        if starting or managed:
+            return {
+                "provider": "llamacpp",
+                "status": "loading",
+                "model": model,
+                "detail": "Loading local llama.cpp model in background…",
+                "managed": True,
+            }
+        if last_error:
+            return {
+                "provider": "llamacpp",
+                "status": "error",
+                "model": model,
+                "detail": last_error,
+                "managed": False,
+            }
+        return {
+            "provider": "llamacpp",
+            "status": "stopped",
+            "model": model,
+            "detail": f"llama.cpp not reachable at {url}",
+            "managed": False,
+        }
+
+    if provider == "ollama":
+        url = (settings.get("ollama_url") or "http://localhost:11434").strip()
+        model = (settings.get("ollama_model") or "").strip() or "auto"
+        return {
+            "provider": "ollama",
+            "status": "external",
+            "model": model,
+            "detail": f"Using Ollama at {url}",
+            "managed": False,
+        }
+
+    if provider == "gemini":
+        has_key = bool(
+            (settings.get("gemini_api_key") or "").strip()
+            or os.environ.get("GEMINI_API_KEY", "").strip()
+        )
+        model = (settings.get("gemini_model") or "gemini-2.5-flash").strip()
+        return {
+            "provider": "gemini",
+            "status": "ready" if has_key else "unconfigured",
+            "model": model,
+            "detail": "Gemini API ready" if has_key else "Add Gemini API key in Settings",
+            "managed": False,
+        }
+
+    return {
+        "provider": provider,
+        "status": "stopped",
+        "model": "",
+        "detail": "",
+        "managed": False,
+    }

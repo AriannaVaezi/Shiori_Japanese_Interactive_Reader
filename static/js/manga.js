@@ -40,6 +40,9 @@ const btnHideMarks = document.getElementById("btn-manga-hide-marks");
 const btnReaderHighlights = document.getElementById("btn-toggle-highlights");
 const btnScanOcr = document.getElementById("btn-manga-scan-ocr");
 const btnCrop = document.getElementById("btn-manga-crop");
+const btnScreenshot = document.getElementById("btn-manga-screenshot");
+const shotPopover = document.getElementById("manga-shot-popover");
+const shotActionsEl = document.getElementById("manga-shot-actions");
 const btnTrouble = document.getElementById("btn-manga-trouble");
 const btnNotes = document.getElementById("btn-manga-notes");
 const btnGrammar = document.getElementById("btn-manga-grammar");
@@ -837,6 +840,7 @@ function renderStage() {
 export async function goToMangaPage(targetPageIndex, { syncRender = true } = {}) {
   if (!mangaDetail || !mangaDetail.page_count) return;
   const clamped = Math.max(0, Math.min(mangaDetail.page_count - 1, Number(targetPageIndex) || 0));
+  hideShotPopover();
 
   if (getLayoutMode() === "vertical") {
     closeMangaTextBar();
@@ -1020,6 +1024,7 @@ export async function closeMangaReader({ flush = true } = {}) {
   if (isFullscreenActive()) {
     await toggleMangaFullscreen(false);
   }
+  hideShotPopover();
   closeMangaTextBar();
   closeGrammarDrawer();
   mangaStage.replaceChildren();
@@ -1250,12 +1255,152 @@ export function initManga({
   });
 
   btnCrop.addEventListener("click", () => {
+    hideShotPopover();
     cropMode = !cropMode;
     applyToolbarLabels();
     if (cropMode) {
       setOcrStatus("Drag a rectangle over any manga text (Esc to cancel)", 3000);
     } else {
       setOcrStatus("");
+    }
+  });
+
+  function hideShotPopover() {
+    if (shotPopover) shotPopover.hidden = true;
+  }
+
+  function getVisibleScreenshotPages() {
+    if (!mangaDetail) return [];
+    if (getLayoutMode() === "spread") {
+      const idxs = [...mangaStage.querySelectorAll(".manga-page-frame")]
+        .map((f) => parseInt(f.dataset.pageIndex, 10))
+        .filter((n) => !Number.isNaN(n));
+      if (idxs.length >= 1) return idxs.slice(0, 2);
+    }
+    return [currentPageIndex];
+  }
+
+  function parseDispositionFilename(headerVal, fallback) {
+    if (!headerVal) return fallback;
+    const utf8Match = headerVal.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match?.[1]) {
+      try {
+        return decodeURIComponent(utf8Match[1].trim());
+      } catch {
+        // fallback below
+      }
+    }
+    const asciiMatch = headerVal.match(/filename="([^"]+)"/i);
+    return asciiMatch?.[1] || fallback;
+  }
+
+  async function captureMangaScreenshot(visualPages, { copyToClipboard = false } = {}) {
+    if (!mangaDetail || !visualPages?.length) return;
+    hideShotPopover();
+    const label =
+      visualPages.length === 2
+        ? `Spread (p.${Math.min(...visualPages) + 1}–${Math.max(...visualPages) + 1})`
+        : `Page ${visualPages[0] + 1}`;
+    setOcrStatus(`Capturing ${label}…`);
+    try {
+      const url = `/api/manga/${mangaDetail.id}/screenshot?pages=${visualPages.join(",")}`;
+      const resp = await fetch(url);
+      if (!resp.ok) {
+        let msg = `HTTP ${resp.status}`;
+        try {
+          const errData = await resp.json();
+          if (errData?.detail) msg = String(errData.detail);
+        } catch {
+          // keep status
+        }
+        throw new Error(msg);
+      }
+      const blob = await resp.blob();
+      const suffix =
+        visualPages.length === 2
+          ? `p${Math.min(...visualPages) + 1}-${Math.max(...visualPages) + 1}`
+          : `p${visualPages[0] + 1}`;
+      const filename = parseDispositionFilename(
+        resp.headers.get("Content-Disposition"),
+        `shiori_manga_${suffix}.png`
+      );
+
+      if (copyToClipboard && navigator.clipboard?.write && typeof ClipboardItem !== "undefined") {
+        try {
+          await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+          setOcrStatus(`Copied ${label} image to clipboard`, 2400);
+          return;
+        } catch {
+          // Fall back to file download if clipboard permission/support fails
+        }
+      }
+
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(objUrl), 2500);
+      setOcrStatus(`Saved screenshot: ${filename}`, 2600);
+    } catch (err) {
+      setOcrStatus(`Screenshot failed: ${err.message}`, 3500);
+    }
+  }
+
+  function populateShotPopover() {
+    if (!shotActionsEl || !mangaDetail) return;
+    shotActionsEl.replaceChildren();
+    const visible = getVisibleScreenshotPages();
+    if (!visible.length) return;
+
+    const addOption = (label, onClick, primary = false) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = primary ? "btn btn-primary manga-shot-opt" : "btn btn-secondary manga-shot-opt";
+      b.textContent = label;
+      b.addEventListener("click", onClick);
+      shotActionsEl.appendChild(b);
+    };
+
+    if (visible.length === 2) {
+      const [leftIdx, rightIdx] = visible;
+      const low = Math.min(leftIdx, rightIdx) + 1;
+      const high = Math.max(leftIdx, rightIdx) + 1;
+      addOption(`⬇ Save Spread (p.${low}–${high})`, () => captureMangaScreenshot(visible), true);
+      addOption("📋 Copy Spread to Clipboard", () =>
+        captureMangaScreenshot(visible, { copyToClipboard: true })
+      );
+      addOption(`⬇ Save Right Page (p.${rightIdx + 1})`, () =>
+        captureMangaScreenshot([rightIdx])
+      );
+      addOption(`⬇ Save Left Page (p.${leftIdx + 1})`, () =>
+        captureMangaScreenshot([leftIdx])
+      );
+    } else {
+      const pNum = visible[0] + 1;
+      addOption(`⬇ Save Page ${pNum} (PNG)`, () => captureMangaScreenshot(visible), true);
+      addOption(`📋 Copy Page ${pNum} to Clipboard`, () =>
+        captureMangaScreenshot(visible, { copyToClipboard: true })
+      );
+    }
+  }
+
+  btnScreenshot?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!shotPopover) return;
+    if (!shotPopover.hidden) {
+      hideShotPopover();
+      return;
+    }
+    populateShotPopover();
+    shotPopover.hidden = false;
+  });
+
+  document.addEventListener("pointerdown", (e) => {
+    if (shotPopover && !shotPopover.hidden && !e.target.closest?.(".manga-shot-anchor")) {
+      hideShotPopover();
     }
   });
 
@@ -1276,7 +1421,7 @@ export function initManga({
     if (mangaView.hidden || !mangaDetail) return;
     if (getLayoutMode() === "vertical") return;
     if (cropMode || e.shiftKey || didJustDragCrop) return;
-    if (e.target.closest?.(".manga-ocr-box, #manga-text-bar, #manga-ocr-status")) return;
+    if (e.target.closest?.(".manga-ocr-box, #manga-text-bar, #manga-ocr-status, .manga-shot-anchor")) return;
 
     const rect = mangaViewport.getBoundingClientRect();
     const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
@@ -1430,6 +1575,10 @@ export function initManga({
     }
 
     if (e.key === "Escape") {
+      if (shotPopover && !shotPopover.hidden) {
+        hideShotPopover();
+        return;
+      }
       if (!textBar.hidden) {
         closeMangaTextBar();
         return;
@@ -1470,6 +1619,10 @@ export function initManga({
     } else if (e.key === "h" || e.key === "H") {
       e.preventDefault();
       btnHideMarks?.click();
+    } else if (e.key === "p" || e.key === "P") {
+      e.preventDefault();
+      const pages = getVisibleScreenshotPages();
+      if (pages.length) captureMangaScreenshot(pages, { copyToClipboard: false });
     }
   });
 

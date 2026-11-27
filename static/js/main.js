@@ -64,6 +64,41 @@ async function resolveMediaType(bookId) {
   }
 }
 
+const btnLlmStatus = document.getElementById("btn-llm-status");
+const llmStatusLabel = document.getElementById("llm-status-label");
+let llmStatusTimer = null;
+
+async function refreshLLMStatus() {
+  if (!btnLlmStatus || !llmStatusLabel) return;
+  clearTimeout(llmStatusTimer);
+  try {
+    const info = await api.getLLMStatus();
+    const st = info.status || "stopped";
+    btnLlmStatus.dataset.status = st;
+    btnLlmStatus.title = info.detail || "LLM Status (click to configure)";
+    btnLlmStatus.hidden = false;
+    if (st === "loading") {
+      llmStatusLabel.textContent = info.model
+        ? `AI: Loading (${info.model})…`
+        : "AI: Loading…";
+      llmStatusTimer = setTimeout(refreshLLMStatus, 2500);
+    } else if (st === "ready") {
+      llmStatusLabel.textContent =
+        info.provider === "gemini" ? "AI: Gemini" : "AI: Ready";
+    } else if (st === "external") {
+      llmStatusLabel.textContent = "AI: Ollama";
+    } else if (st === "unconfigured") {
+      llmStatusLabel.textContent = "AI: Key Needed";
+    } else if (st === "error") {
+      llmStatusLabel.textContent = "AI: Offline";
+    } else {
+      llmStatusLabel.textContent = "AI: Off";
+    }
+  } catch {
+    btnLlmStatus.hidden = true;
+  }
+}
+
 async function bootstrap() {
   try {
     const settings = await api.getSettings();
@@ -73,7 +108,7 @@ async function bootstrap() {
   }
 
   applyVisualSettings();
-  initSettings();
+  initSettings({ onSettingsSaved: () => refreshLLMStatus() });
   initGrammar();
   initTimer({
     onStartTimedQuiz: (triggerType) => launchQuiz(triggerType),
@@ -175,6 +210,7 @@ async function bootstrap() {
   document
     .getElementById("btn-open-notes-reader")
     .addEventListener("click", () => openNotesModal());
+  btnLlmStatus?.addEventListener("click", openSettingsModal);
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
@@ -184,6 +220,7 @@ async function bootstrap() {
     }
   });
 
+  refreshLLMStatus();
   await loadLibrary();
 }
 

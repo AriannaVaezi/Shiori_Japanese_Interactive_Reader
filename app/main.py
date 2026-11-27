@@ -40,6 +40,7 @@ def _static_asset_version() -> str:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     db.init_db()
+    llamacpp_manager.start_managed_server_async(db.get_all_settings())
     books_service.scan_books_folder()
     manga_service.scan_manga_folder()
     try:

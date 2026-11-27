@@ -18,6 +18,10 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <button id="btn-llm-status" class="btn btn-pill llm-status-pill" type="button" title="Local AI status (click to configure)" hidden>
+          <span class="llm-status-dot" aria-hidden="true"></span>
+          <span id="llm-status-label">AI</span>
+        </button>
         <button id="btn-open-notes-lib" class="btn btn-secondary" type="button">栞 Notes</button>
         <button id="btn-rescan" class="btn btn-secondary" type="button">Rescan Library</button>
         <button id="btn-open-settings-lib" class="btn btn-secondary" type="button">Settings</button>
@@ -177,6 +181,16 @@
         <button id="btn-manga-hide-marks" class="btn btn-pill" type="button" title="Hide highlights, note boxes, and OCR overlays for a clean view (H)">Marks: Shown</button>
         <button id="btn-manga-scan-ocr" class="btn btn-pill" type="button" title="Run / refresh OCR on visible page(s)">Scan Page OCR</button>
         <button id="btn-manga-crop" class="btn btn-pill" type="button" title="Drag on a page to OCR any region (or hold Shift + Drag anytime) (C)">✂ Select Area</button>
+        <div class="manga-shot-anchor">
+          <button id="btn-manga-screenshot" class="btn btn-pill" type="button" title="Screenshot current page or spread (P)">📷 Screenshot</button>
+          <div id="manga-shot-popover" class="timer-popover manga-shot-popover" hidden>
+            <div class="timer-pop-head">
+              <strong>Manga Screenshot</strong>
+              <span class="hint-text">Shortcut: P</span>
+            </div>
+            <div id="manga-shot-actions" class="manga-shot-actions"></div>
+          </div>
+        </div>
         <button id="btn-manga-trouble" class="btn btn-pill" type="button" title="Trouble Radar">
           Radar <span id="manga-trouble-count-badge" class="badge" hidden>0</span>
         </button>

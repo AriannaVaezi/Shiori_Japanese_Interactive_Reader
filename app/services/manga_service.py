@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import json
 import posixpath
+import re
+from io import BytesIO
 from pathlib import Path
 from typing import Any
+
+from PIL import Image
 
 from app import config, db
 from app.epub_parser import compute_file_hash
@@ -277,6 +281,78 @@ def _load_page_image_bytes(book_id: int, page_index: int) -> tuple[bytes, str] |
 def get_manga_page_image(book_id: int, page_index: int) -> tuple[bytes, str] | None:
     """Return raw bytes and MIME type for a specific manga page image."""
     return _load_page_image_bytes(book_id, page_index)
+
+
+def _to_rgb_image(raw: bytes) -> Image.Image:
+    with Image.open(BytesIO(raw)) as im:
+        if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+            rgba = im.convert("RGBA")
+            bg = Image.new("RGB", rgba.size, (255, 255, 255))
+            bg.paste(rgba, mask=rgba.split()[3])
+            return bg
+        return im.convert("RGB")
+
+
+def render_manga_screenshot(
+    book_id: int, page_indices: list[int]
+) -> tuple[bytes, str, str] | None:
+    """Render 1 page or a 2-page spread into a lossless PNG screenshot without UI overlays."""
+    if not page_indices or len(page_indices) > 2:
+        return None
+
+    with db.get_conn() as conn:
+        book_row = conn.execute(
+            "SELECT title FROM books WHERE id = ? AND media_type = 'manga'",
+            (book_id,),
+        ).fetchone()
+    if book_row is None:
+        return None
+
+    loaded: list[Image.Image] = []
+    for idx in page_indices:
+        asset = get_manga_page_image(book_id, idx)
+        if asset is None:
+            return None
+        loaded.append(_to_rgb_image(asset[0]))
+
+    if len(loaded) == 1:
+        out_img = loaded[0]
+    else:
+        left_img, right_img = loaded
+        target_h = max(left_img.height, right_img.height)
+
+        def _fit_height(im: Image.Image) -> Image.Image:
+            if im.height == target_h:
+                return im
+            new_w = max(1, round(im.width * (target_h / max(1, im.height))))
+            return im.resize((new_w, target_h), Image.Resampling.LANCZOS)
+
+        left_fit = _fit_height(left_img)
+        right_fit = _fit_height(right_img)
+        out_img = Image.new(
+            "RGB",
+            (left_fit.width + right_fit.width, target_h),
+            (255, 255, 255),
+        )
+        out_img.paste(left_fit, (0, 0))
+        out_img.paste(right_fit, (left_fit.width, 0))
+
+    buf = BytesIO()
+    out_img.save(buf, format="PNG")
+
+    safe_title = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", book_row["title"] or "").strip(" .")
+    if not safe_title:
+        safe_title = "shiori_manga"
+    if len(page_indices) == 1:
+        suffix = f"p{page_indices[0] + 1:03d}"
+    else:
+        low, high = min(page_indices), max(page_indices)
+        suffix = f"p{low + 1:03d}-{high + 1:03d}"
+
+    utf8_name = f"{safe_title}_{suffix}.png"
+    ascii_safe = re.sub(r"[^A-Za-z0-9._-]+", "_", safe_title).strip("._") or "shiori_manga"
+    ascii_name = f"{ascii_safe}_{suffix}.png"
+    return buf.getvalue(), utf8_name, ascii_name
 
 
 def ocr_manga_page(book_id: int, page_index: int, force: bool = False) -> dict[str, Any] | None:

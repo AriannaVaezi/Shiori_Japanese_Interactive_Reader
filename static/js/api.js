@@ -99,6 +99,9 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  getLLMStatus() {
+    return request("/api/llm/status");
+  },
   getLlamaCppModels(url = "") {
     const qs = url ? `?url=${encodeURIComponent(url)}` : "";
     return request(`/api/llm/llamacpp-models${qs}`);

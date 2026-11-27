@@ -180,7 +180,7 @@ export function closeSettingsModal() {
   modal.hidden = true;
 }
 
-export function initSettings() {
+export function initSettings({ onSettingsSaved = null } = {}) {
   form.querySelectorAll('input[name="llm_provider"]').forEach((radio) => {
     radio.addEventListener("change", () => {
       const p = getSelectedProvider();
@@ -282,6 +282,7 @@ export function initSettings() {
       const saved = await api.updateSettings(payload);
       state.settings = { ...state.settings, ...saved };
       closeSettingsModal();
+      if (onSettingsSaved) onSettingsSaved(saved);
     } catch (err) {
       testResult.className = "test-result err";
       testResult.textContent = `Could not save: ${err.message}`;

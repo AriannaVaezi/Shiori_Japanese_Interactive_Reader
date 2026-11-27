@@ -2427,5 +2427,118 @@ def test_highlight_dedup_existing_notes_and_unhighlight(temp_env):
         assert not any(line.strip().startswith(".trouble-word {") for line in css_res.text.splitlines())
 
 
+def test_async_llamacpp_startup_status_and_manga_screenshot(
+    temp_env, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # 1) run.py must not block synchronously on ensure_managed_server_running before uvicorn.run
+    run_src = (Path(__file__).resolve().parent.parent / "run.py").read_text(encoding="utf-8")
+    assert "ensure_managed_server_running" not in run_src
+
+    async_calls: list[dict[str, str]] = []
+    orig_async_start = llamacpp_manager.start_managed_server_async
+
+    def spy_async_start(settings_dict, *args, **kwargs):
+        async_calls.append(dict(settings_dict))
+        return orig_async_start(settings_dict, *args, **kwargs)
+
+    monkeypatch.setattr(llamacpp_manager, "start_managed_server_async", spy_async_start)
+
+    _create_synthetic_manga_epub(config.MANGA_DIR / "shot_sample.epub", title="サンプル漫画 第一巻")
+
+    with TestClient(app) as client:
+        assert len(async_calls) >= 1
+
+        # 2) Non-LLM setting updates must not block or restart llama-server
+        ensure_calls: list[bool] = []
+        stop_calls: list[bool] = []
+        monkeypatch.setattr(
+            llamacpp_manager,
+            "ensure_managed_server_running",
+            lambda *a, **kw: ensure_calls.append(True) or True,
+        )
+        monkeypatch.setattr(
+            llamacpp_manager,
+            "stop_managed_server",
+            lambda: stop_calls.append(True),
+        )
+        non_llm = client.put("/api/settings", json={"theme": "dark", "manga_layout": "single"})
+        assert non_llm.status_code == 200
+        assert ensure_calls == []
+        assert stop_calls == []
+
+        # 3) /api/llm/status reports loading, ready, stopped, external, and gemini states cleanly
+        monkeypatch.setattr(llamacpp_manager, "is_server_ready", lambda *a, **kw: False)
+        monkeypatch.setattr(llamacpp_manager, "_STARTING", True)
+        monkeypatch.setattr(llamacpp_manager, "_MANAGED_MODEL", "qwen-test")
+        st_loading = client.get("/api/llm/status")
+        assert st_loading.status_code == 200
+        assert st_loading.json()["status"] == "loading"
+        assert st_loading.json()["model"] == "qwen-test"
+
+        monkeypatch.setattr(llamacpp_manager, "_STARTING", False)
+        monkeypatch.setattr(llamacpp_manager, "is_server_ready", lambda *a, **kw: True)
+        st_ready = client.get("/api/llm/status")
+        assert st_ready.status_code == 200
+        assert st_ready.json()["status"] == "ready"
+
+        monkeypatch.setattr(llamacpp_manager, "is_server_ready", lambda *a, **kw: False)
+        st_stopped = client.get("/api/llm/status")
+        assert st_stopped.status_code == 200
+        assert st_stopped.json()["status"] == "stopped"
+
+        client.put("/api/settings", json={"llm_provider": "ollama", "ollama_model": "qwen3:8b"})
+        st_ollama = client.get("/api/llm/status").json()
+        assert st_ollama["provider"] == "ollama"
+        assert st_ollama["status"] == "external"
+
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        client.put("/api/settings", json={"llm_provider": "gemini", "clear_gemini_key": True})
+        st_gem = client.get("/api/llm/status").json()
+        assert st_gem["provider"] == "gemini"
+        assert st_gem["status"] == "unconfigured"
+
+        # 4) Manga lossless PNG screenshot endpoint (1-page & 2-page spread stitching)
+        scan_res = client.post("/api/manga/scan")
+        assert scan_res.status_code == 200
+        manga_list = scan_res.json()["manga"]
+        assert len(manga_list) == 1
+        manga_id = manga_list[0]["id"]
+
+        shot_single = client.get(f"/api/manga/{manga_id}/screenshot?pages=0")
+        assert shot_single.status_code == 200
+        assert shot_single.headers["content-type"].startswith("image/png")
+        assert "filename*=UTF-8''" in shot_single.headers.get("content-disposition", "")
+        with Image.open(io.BytesIO(shot_single.content)) as im1:
+            assert im1.size == (800, 1200)
+
+        shot_spread = client.get(f"/api/manga/{manga_id}/screenshot?pages=1,0")
+        assert shot_spread.status_code == 200
+        assert shot_spread.headers["content-type"].startswith("image/png")
+        assert "p001-002" in shot_spread.headers.get("content-disposition", "")
+        with Image.open(io.BytesIO(shot_spread.content)) as im2:
+            assert im2.size == (1600, 1200)
+
+        for bad_pages in ("", "0,1,2", "abc", "-1"):
+            assert (
+                client.get(f"/api/manga/{manga_id}/screenshot?pages={bad_pages}").status_code
+                == 400
+            )
+        assert client.get(f"/api/manga/{manga_id}/screenshot?pages=99").status_code == 404
+
+        # 5) Frontend includes background LLM status pill and screenshot UI
+        index_res = client.get("/")
+        assert index_res.status_code == 200
+        assert 'id="btn-llm-status"' in index_res.text
+        assert 'id="btn-manga-screenshot"' in index_res.text
+
+        api_js = client.get("/static/js/api.js")
+        assert api_js.status_code == 200
+        assert "getLLMStatus" in api_js.text
+
+        manga_js = client.get("/static/js/manga.js")
+        assert manga_js.status_code == 200
+        assert "/screenshot?pages=" in manga_js.text
+
+
 
 

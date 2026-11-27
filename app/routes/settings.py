@@ -13,6 +13,15 @@ from app import config, db, llamacpp_manager, llm
 
 router = APIRouter(prefix="/api", tags=["settings"])
 
+_LLM_LIFECYCLE_KEYS = {
+    "llm_provider",
+    "llamacpp_url",
+    "llamacpp_model",
+    "llamacpp_api_key",
+    "llamacpp_model_path",
+    "llamacpp_autostart",
+}
+
 
 class SettingsUpdateRequest(BaseModel):
     llm_provider: str | None = None
@@ -95,7 +104,8 @@ async def put_settings(req: SettingsUpdateRequest):
             updates["gemini_api_key"] = key_val
     data.pop("gemini_api_key", None)
 
-    if bool(data.pop("clear_llamacpp_key", False)):
+    clear_llama_key = bool(data.pop("clear_llamacpp_key", False))
+    if clear_llama_key:
         updates["llamacpp_api_key"] = ""
     elif "llamacpp_api_key" in data:
         key_val = str(data.pop("llamacpp_api_key")).strip()
@@ -111,15 +121,22 @@ async def put_settings(req: SettingsUpdateRequest):
         updates["manga_layout"] = "spread"
 
     saved = db.update_settings(updates)
-    if (
-        saved.get("llm_provider", "").strip().lower() == "llamacpp"
-        and saved.get("llamacpp_autostart", "true").strip().lower()
-        not in {"false", "0", "no", "off"}
-    ):
-        await asyncio.to_thread(llamacpp_manager.ensure_managed_server_running, saved)
-    else:
-        await asyncio.to_thread(llamacpp_manager.stop_managed_server)
+    if clear_llama_key or (set(updates.keys()) & _LLM_LIFECYCLE_KEYS):
+        if (
+            saved.get("llm_provider", "").strip().lower() == "llamacpp"
+            and saved.get("llamacpp_autostart", "true").strip().lower()
+            not in {"false", "0", "no", "off"}
+        ):
+            await asyncio.to_thread(llamacpp_manager.ensure_managed_server_running, saved, 0.0)
+        else:
+            await asyncio.to_thread(llamacpp_manager.stop_managed_server)
     return _public_settings(saved)
+
+
+@router.get("/llm/status")
+async def get_llm_status():
+    """Return non-blocking background startup and readiness status for the active LLM."""
+    return await asyncio.to_thread(llamacpp_manager.get_status, db.get_all_settings())
 
 
 @router.get("/llm/llamacpp-models")

@@ -261,7 +261,45 @@ html, body {
 
 .topbar-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.llm-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.llm-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.llm-status-pill[data-status="loading"] .llm-status-dot {
+  background: #d99b26;
+  animation: llmDotPulse 1.4s ease-in-out infinite;
+}
+
+.llm-status-pill[data-status="ready"] .llm-status-dot {
+  background: #2f9e44;
+}
+
+.llm-status-pill[data-status="external"] .llm-status-dot {
+  background: var(--accent);
+}
+
+.llm-status-pill[data-status="unconfigured"] .llm-status-dot,
+.llm-status-pill[data-status="error"] .llm-status-dot {
+  background: #c94a4a;
+}
+
+@keyframes llmDotPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
 }
 
 .library-main {
@@ -2546,5 +2584,26 @@ html.manga-fullscreen #manga-bar:focus-within {
 
 html.manga-fullscreen .manga-workspace {
   height: 100vh;
+}
+
+.manga-shot-anchor {
+  position: relative;
+}
+
+.manga-shot-popover {
+  width: 245px;
+}
+
+.manga-shot-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.manga-shot-opt {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  font-size: 12.5px;
 }
 
