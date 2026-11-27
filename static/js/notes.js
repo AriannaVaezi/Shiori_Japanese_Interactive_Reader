@@ -7,6 +7,7 @@ import {
   rawOffsetToPlainOffset,
   renderHighlightedText,
   state,
+  stripHighlightMarkup,
 } from "./state.js";
 
 const modal = document.getElementById("notes-modal");
@@ -65,6 +66,15 @@ let onNotesChangedCb = null;
 
 function normalizeHighlightColor(color) {
   return HIGHLIGHT_COLORS.includes(color) ? color : "";
+}
+
+function compactCoreQuote(text) {
+  const plain = stripHighlightMarkup(text || "").replace(/\s+/g, "");
+  const stripped = plain.replace(
+    /^[。、．，.,!?！？「」『』（）()【】［］\[\]・…—―\-〜~"'“”‘’]+|[。、．，.,!?！？「」『』（）()【】［］\[\]・…—―\-〜~"'“”‘’]+$/g,
+    ""
+  );
+  return stripped || plain;
 }
 
 function setScopeTab(scope) {
@@ -340,6 +350,36 @@ async function fetchAndRenderNotes() {
         actions.appendChild(btnJump);
       }
 
+      if (cardColor) {
+        const btnUnhl = document.createElement("button");
+        btnUnhl.type = "button";
+        btnUnhl.className = "btn btn-ghost";
+        btnUnhl.title = note.note_text?.trim()
+          ? "Remove highlight color (keeps written note)"
+          : "Remove highlight and entry from notes";
+        btnUnhl.textContent = "Unhighlight";
+        btnUnhl.addEventListener("click", async () => {
+          btnUnhl.disabled = true;
+          try {
+            await api.unhighlightNotes({
+              book_id: note.book_id,
+              chapter_index: note.chapter_index,
+              note_ids: [note.id],
+            });
+            if (editingNoteId === note.id) resetComposer();
+            await fetchAndRenderNotes();
+            await refreshNotesBadge();
+            if (onNotesChangedCb) onNotesChangedCb();
+          } catch (err) {
+            statusEl.textContent = `Could not unhighlight: ${err.message}`;
+            statusEl.hidden = false;
+          } finally {
+            btnUnhl.disabled = false;
+          }
+        });
+        actions.appendChild(btnUnhl);
+      }
+
       const btnEdit = document.createElement("button");
       btnEdit.type = "button";
       btnEdit.className = "btn btn-ghost";
@@ -434,10 +474,47 @@ export async function openNotesModal({
   setCategoryChip("");
   setColorFilter("");
 
-  inputQuote.value = quoteText;
-  inputNote.value = noteText;
-  selectCategory.value = quoteText ? category : "note";
-  setComposerColor(color === "" ? "" : normalizeHighlightColor(color) || "yellow");
+  let matchedExisting = null;
+  const targetCore = compactCoreQuote(quoteText);
+  if (quoteText && resolvedBookId != null && resolvedChapterIdx != null && targetCore) {
+    try {
+      const existingRes = await api.listNotes({
+        bookId: resolvedBookId,
+        chapterIndex: resolvedChapterIdx,
+        limit: 200,
+      });
+      const candidates = existingRes.notes || [];
+      const sameSentOrOpen = candidates.filter((n) => {
+        const nCore = compactCoreQuote(n.quote_text);
+        if (!nCore) return false;
+        const sentOk = !sentId || !n.sent_id || n.sent_id === sentId;
+        const eq = nCore === targetCore;
+        const contained =
+          (nCore.includes(targetCore) || targetCore.includes(nCore)) &&
+          Math.min(nCore.length, targetCore.length) >= 2;
+        return (eq || contained) && (sentOk || Math.min(nCore.length, targetCore.length) >= 4);
+      });
+      matchedExisting =
+        sameSentOrOpen.find((n) => (n.note_text || "").trim()) || sameSentOrOpen[0] || null;
+    } catch {
+      matchedExisting = null;
+    }
+  }
+
+  if (matchedExisting) {
+    editingNoteId = matchedExisting.id;
+    inputQuote.value = matchedExisting.quote_text || quoteText;
+    inputNote.value = matchedExisting.note_text || noteText;
+    selectCategory.value = matchedExisting.category || category;
+    setComposerColor(normalizeHighlightColor(matchedExisting.color));
+    btnCancelEdit.hidden = false;
+    btnSave.textContent = "Update Note";
+  } else {
+    inputQuote.value = quoteText;
+    inputNote.value = noteText;
+    selectCategory.value = quoteText ? category : "note";
+    setComposerColor(color === "" ? "" : normalizeHighlightColor(color) || "yellow");
+  }
   lastComposerInput = inputNote;
   syncComposerAvailability();
 

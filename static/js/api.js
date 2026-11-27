@@ -159,6 +159,12 @@ export const api = {
       body: JSON.stringify(payload),
     });
   },
+  unhighlightNotes(payload) {
+    return request("/api/notes/unhighlight", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
   updateNote(noteId, payload) {
     return request(`/api/notes/${noteId}`, {
       method: "PUT",

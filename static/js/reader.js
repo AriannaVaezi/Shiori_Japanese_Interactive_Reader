@@ -46,6 +46,7 @@ const btnSelLookup = document.getElementById("btn-sel-lookup");
 const btnSelChat = document.getElementById("btn-sel-chat");
 const btnSelSaveNote = document.getElementById("btn-sel-save-note");
 const btnSelAskGrammar = document.getElementById("btn-sel-ask-grammar");
+const btnSelUnhighlight = document.getElementById("btn-sel-unhighlight");
 
 let onBackLibraryCb = null;
 let onChapterQuizCb = null;
@@ -166,6 +167,7 @@ function applyChapterNoteHighlights(notes) {
   unwrapUserHighlights(contentEl);
   contentEl.querySelectorAll(".sent").forEach((el) => {
     el.classList.remove("has-note", ...HIGHLIGHT_COLORS.map((c) => `hl-${c}`));
+    delete el.dataset.noteId;
   });
 
   const sentList = [...contentEl.querySelectorAll(".sent")];
@@ -186,6 +188,7 @@ function applyChapterNoteHighlights(notes) {
     if (!wrapped && sentEl) {
       sentEl.classList.remove(...HIGHLIGHT_COLORS.map((c) => `hl-${c}`));
       sentEl.classList.add("has-note", `hl-${color}`);
+      sentEl.dataset.noteId = String(note.id);
     }
   }
 }
@@ -500,6 +503,20 @@ export function initReader({
       ? mangaTokensEl?.dataset.sentId || null
       : sentEl?.dataset.sentId || null;
 
+    const touchedNoteIds = new Set();
+    if (typeof range.intersectsNode === "function") {
+      activeContainer.querySelectorAll("mark.user-hl[data-note-id]").forEach((m) => {
+        if (range.intersectsNode(m)) {
+          const id = Number(m.dataset.noteId);
+          if (id) touchedNoteIds.add(id);
+        }
+      });
+    }
+    if (sentEl?.dataset.noteId) {
+      const sid = Number(sentEl.dataset.noteId);
+      if (sid) touchedNoteIds.add(sid);
+    }
+
     suppressSelectionClickUntil = Date.now() + 250;
     const rect = range.getBoundingClientRect();
     const anchorRect = {
@@ -514,6 +531,7 @@ export function initReader({
       sentId: resolvedSentId,
       sentenceText: sentEl ? extractCleanText(sentEl) : cleanTarget,
       targetText: cleanTarget,
+      touchedNoteIds: [...touchedNoteIds],
       anchorRect,
     };
 
@@ -595,12 +613,36 @@ export function initReader({
           category: "quote",
           color,
           replace_existing: true,
+          target_note_ids: payload.touchedNoteIds || [],
         });
         if (onHighlightCreatedCb) onHighlightCreatedCb();
       } catch {
         // ignore transient create error
       }
     });
+  });
+
+  btnSelUnhighlight?.addEventListener("click", async () => {
+    if (!pendingSelection) return;
+    const payload = { ...pendingSelection };
+    hideSelectionTooltip();
+    window.getSelection()?.removeAllRanges();
+    closeLookup();
+    const bookId = state.currentBook?.id ?? null;
+    const chapterIndex = state.currentChapter?.chapter_index ?? null;
+    if (bookId == null || chapterIndex == null) return;
+    try {
+      await api.unhighlightNotes({
+        book_id: bookId,
+        chapter_index: chapterIndex,
+        sent_id: payload.sentId || null,
+        quote_text: payload.targetText,
+        note_ids: payload.touchedNoteIds || [],
+      });
+      if (onHighlightCreatedCb) onHighlightCreatedCb();
+    } catch {
+      // ignore transient unhighlight error
+    }
   });
 
   btnSelAskGrammar.addEventListener("click", () => {

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.services import notes_service
 
@@ -19,6 +19,15 @@ class NoteCreateRequest(BaseModel):
     category: str = "quote"
     color: str = "yellow"
     replace_existing: bool = False
+    target_note_ids: list[int] = Field(default_factory=list)
+
+
+class NoteUnhighlightRequest(BaseModel):
+    book_id: int
+    chapter_index: int
+    sent_id: str | None = None
+    quote_text: str = ""
+    note_ids: list[int] = Field(default_factory=list)
 
 
 class NoteUpdateRequest(BaseModel):
@@ -61,12 +70,25 @@ def create_note(req: NoteCreateRequest):
             category=req.category,
             color=req.color,
             replace_existing=req.replace_existing,
+            target_note_ids=req.target_note_ids,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"note": note}
+
+
+@router.post("/unhighlight")
+def unhighlight_notes(req: NoteUnhighlightRequest):
+    """Remove highlight marks; deletes notes without user commentary, clears color otherwise."""
+    return notes_service.unhighlight_notes(
+        book_id=req.book_id,
+        chapter_index=req.chapter_index,
+        sent_id=req.sent_id,
+        quote_text=req.quote_text,
+        note_ids=req.note_ids,
+    )
 
 
 @router.put("/{note_id}")

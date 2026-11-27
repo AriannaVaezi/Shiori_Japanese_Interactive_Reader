@@ -56,6 +56,7 @@ const btnEditApply = document.getElementById("btn-manga-edit-apply");
 const btnBarChat = document.getElementById("btn-manga-bar-chat");
 const btnBarGrammar = document.getElementById("btn-manga-bar-grammar");
 const btnBarSave = document.getElementById("btn-manga-bar-save");
+const btnBarUnhighlight = document.getElementById("btn-manga-unhighlight");
 const btnBarEdit = document.getElementById("btn-manga-bar-edit");
 const btnBarClose = document.getElementById("btn-manga-bar-close");
 
@@ -1372,6 +1373,9 @@ export function initManga({
     btn.addEventListener("click", async () => {
       if (!activeInspector || !mangaDetail) return;
       const color = btn.dataset.color || "yellow";
+      const existingIds = (mangaNotesByPage.get(activeInspector.pageIndex) || [])
+        .filter((n) => n.sent_id === activeInspector.sentId)
+        .map((n) => n.id);
       try {
         await api.createNote({
           book_id: mangaDetail.id,
@@ -1382,6 +1386,7 @@ export function initManga({
           category: "quote",
           color,
           replace_existing: true,
+          target_note_ids: existingIds,
         });
         await refreshMangaNoteMarks();
         if (onHighlightCreatedCb) onHighlightCreatedCb();
@@ -1389,6 +1394,26 @@ export function initManga({
         setOcrStatus(`Highlight failed: ${err.message}`, 3000);
       }
     });
+  });
+
+  btnBarUnhighlight?.addEventListener("click", async () => {
+    if (!activeInspector || !mangaDetail) return;
+    const existingIds = (mangaNotesByPage.get(activeInspector.pageIndex) || [])
+      .filter((n) => n.sent_id === activeInspector.sentId)
+      .map((n) => n.id);
+    try {
+      await api.unhighlightNotes({
+        book_id: mangaDetail.id,
+        chapter_index: activeInspector.pageIndex,
+        sent_id: activeInspector.sentId,
+        quote_text: activeInspector.text,
+        note_ids: existingIds,
+      });
+      await refreshMangaNoteMarks();
+      if (onHighlightCreatedCb) onHighlightCreatedCb();
+    } catch (err) {
+      setOcrStatus(`Unhighlight failed: ${err.message}`, 3000);
+    }
   });
 
   attachCropGestureHandler();

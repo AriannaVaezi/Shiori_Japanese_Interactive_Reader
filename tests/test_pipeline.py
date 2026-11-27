@@ -2276,5 +2276,150 @@ def test_highlight_recolor_dedup_and_multisentence_assets(temp_env):
         assert "replace_existing: true" in reader_js.text
 
 
+def test_highlight_dedup_existing_notes_and_unhighlight(temp_env):
+    with TestClient(app) as client:
+        books = client.get("/api/books").json()["books"]
+        book1 = books[0]
+        ch1_idx = next(c["chapter_index"] for c in book1["chapters"] if c["title"] == "１")
+
+        # 1) Existing note with written commentary & edge punctuation + empty color
+        saved_note = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s1",
+                "quote_text": "「駅前の商店街。」",
+                "note_text": "Already saved with my study note.",
+                "category": "expression",
+                "color": "",
+            },
+        ).json()["note"]
+
+        # Highlighting the exact core (without punctuation) or a contained substring updates in place
+        rehl_core = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s1",
+                "quote_text": "駅前の商店街",
+                "color": "blue",
+                "replace_existing": True,
+            },
+        )
+        assert rehl_core.status_code == 200
+        assert rehl_core.json()["note"]["id"] == saved_note["id"]
+        assert rehl_core.json()["note"]["color"] == "blue"
+        assert rehl_core.json()["note"]["note_text"] == "Already saved with my study note."
+
+        rehl_sub = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s1",
+                "quote_text": "商店街",
+                "color": "pink",
+                "replace_existing": True,
+            },
+        )
+        assert rehl_sub.status_code == 200
+        assert rehl_sub.json()["note"]["id"] == saved_note["id"]
+        assert rehl_sub.json()["note"]["color"] == "pink"
+        assert rehl_sub.json()["note"]["quote_text"] == "「駅前の商店街。」"
+
+        # Highlighting by DOM target_note_ids updates in place without duplicating
+        rehl_id = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "quote_text": "商店街",
+                "color": "green",
+                "replace_existing": True,
+                "target_note_ids": [saved_note["id"]],
+            },
+        )
+        assert rehl_id.status_code == 200
+        assert rehl_id.json()["note"]["id"] == saved_note["id"]
+        assert rehl_id.json()["note"]["color"] == "green"
+
+        chap_notes = client.get(
+            f"/api/notes?book_id={book1['id']}&chapter_index={ch1_idx}"
+        ).json()["notes"]
+        matching_saved = [n for n in chap_notes if "商店街" in n["quote_text"]]
+        assert len(matching_saved) == 1
+
+        # 2) Unhighlight entry WITHOUT a written note -> deletes row from notes
+        hl_only = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s2",
+                "quote_text": "消去されるハイライト。",
+                "note_text": "",
+                "color": "yellow",
+                "replace_existing": True,
+            },
+        ).json()["note"]
+        unhl_empty = client.post(
+            "/api/notes/unhighlight",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s2",
+                "quote_text": "消去されるハイライト",
+                "note_ids": [hl_only["id"]],
+            },
+        )
+        assert unhl_empty.status_code == 200
+        unhl_empty_data = unhl_empty.json()
+        assert hl_only["id"] in unhl_empty_data["deleted_ids"]
+        assert unhl_empty_data["cleared_ids"] == []
+        remaining_ids = {
+            n["id"]
+            for n in client.get(f"/api/notes?book_id={book1['id']}&chapter_index={ch1_idx}").json()["notes"]
+        }
+        assert hl_only["id"] not in remaining_ids
+
+        # 3) Unhighlight entry WITH a written note -> keeps row, clears color to ""
+        unhl_written = client.post(
+            "/api/notes/unhighlight",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "note_ids": [saved_note["id"]],
+            },
+        )
+        assert unhl_written.status_code == 200
+        unhl_written_data = unhl_written.json()
+        assert saved_note["id"] in unhl_written_data["cleared_ids"]
+        assert unhl_written_data["deleted_ids"] == []
+        refetched = [
+            n
+            for n in client.get(f"/api/notes?book_id={book1['id']}&chapter_index={ch1_idx}").json()["notes"]
+            if n["id"] == saved_note["id"]
+        ]
+        assert len(refetched) == 1
+        assert refetched[0]["color"] == ""
+        assert refetched[0]["note_text"] == "Already saved with my study note."
+
+        # 4) Frontend templates & JS include unhighlight controls & target_note_ids wiring
+        index_res = client.get("/")
+        assert index_res.status_code == 200
+        assert 'id="btn-sel-unhighlight"' in index_res.text
+        assert 'id="btn-manga-unhighlight"' in index_res.text
+
+        api_js = client.get("/static/js/api.js")
+        assert api_js.status_code == 200
+        assert "unhighlightNotes" in api_js.text
+
+        reader_js = client.get("/static/js/reader.js")
+        assert reader_js.status_code == 200
+        assert "target_note_ids" in reader_js.text
+
+
 
 
