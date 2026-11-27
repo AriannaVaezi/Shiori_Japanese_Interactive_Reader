@@ -2420,6 +2420,12 @@ def test_highlight_dedup_existing_notes_and_unhighlight(temp_env):
         assert reader_js.status_code == 200
         assert "target_note_ids" in reader_js.text
 
+        css_res = client.get("/static/css/app.css")
+        assert css_res.status_code == 200
+        assert ".trouble-row .trouble-word {" in css_res.text
+        assert "\n.trouble-word {" not in css_res.text
+        assert not any(line.strip().startswith(".trouble-word {") for line in css_res.text.splitlines())
+
 
 
 

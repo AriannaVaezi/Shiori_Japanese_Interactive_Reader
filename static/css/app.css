@@ -1552,7 +1552,7 @@ html[data-hide-annotations="true"] .sent-ask-btn {
   flex: 1 1 auto;
 }
 
-.trouble-word {
+.trouble-row .trouble-word {
   font-family: var(--font-book);
   font-size: 17px;
   font-weight: 700;
