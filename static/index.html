@@ -181,16 +181,7 @@
         <button id="btn-manga-hide-marks" class="btn btn-pill" type="button" title="Hide highlights, note boxes, and OCR overlays for a clean view (H)">Marks: Shown</button>
         <button id="btn-manga-scan-ocr" class="btn btn-pill" type="button" title="Run / refresh OCR on visible page(s)">Scan Page OCR</button>
         <button id="btn-manga-crop" class="btn btn-pill" type="button" title="Drag on a page to OCR any region (or hold Shift + Drag anytime) (C)">✂ Select Area</button>
-        <div class="manga-shot-anchor">
-          <button id="btn-manga-screenshot" class="btn btn-pill" type="button" title="Screenshot current page or spread (P)">📷 Screenshot</button>
-          <div id="manga-shot-popover" class="timer-popover manga-shot-popover" hidden>
-            <div class="timer-pop-head">
-              <strong>Manga Screenshot</strong>
-              <span class="hint-text">Shortcut: P</span>
-            </div>
-            <div id="manga-shot-actions" class="manga-shot-actions"></div>
-          </div>
-        </div>
+        <button id="btn-manga-screenshot" class="btn btn-pill" type="button" title="Screenshot current page or spread (P)">📷 Screenshot</button>
         <button id="btn-manga-trouble" class="btn btn-pill" type="button" title="Trouble Radar">
           Radar <span id="manga-trouble-count-badge" class="badge" hidden>0</span>
         </button>
@@ -238,6 +229,14 @@
         <input id="manga-text-edit-input" type="text" placeholder="Edit recognized Japanese text…" />
         <button id="btn-manga-edit-apply" class="btn btn-primary" type="button">Apply</button>
       </div>
+    </div>
+
+    <div id="manga-shot-popover" class="timer-popover manga-shot-popover" hidden>
+      <div class="timer-pop-head">
+        <strong>Manga Screenshot</strong>
+        <span class="hint-text">Shortcut: P</span>
+      </div>
+      <div id="manga-shot-actions" class="manga-shot-actions"></div>
     </div>
   </div>
 

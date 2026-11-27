@@ -2540,6 +2540,15 @@ def test_async_llamacpp_startup_status_and_manga_screenshot(
         assert "/screenshot?pages=" in manga_js.text
         assert "\nfunction hideShotPopover()" in manga_js.text
 
+        manga_bar_start = index_res.text.index('id="manga-bar"')
+        manga_bar_end = index_res.text.index("</header>", manga_bar_start)
+        shot_pop_pos = index_res.text.index('id="manga-shot-popover"')
+        assert shot_pop_pos > manga_bar_end
+
+        css_res = client.get("/static/css/app.css")
+        assert css_res.status_code == 200
+        assert ".manga-shot-popover {\n  position: fixed;" in css_res.text.replace("\r\n", "\n")
+
 
 
 

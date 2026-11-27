@@ -1397,10 +1397,29 @@ export function initManga({
     }
     populateShotPopover();
     shotPopover.hidden = false;
+    const rect = btnScreenshot.getBoundingClientRect();
+    const popW = shotPopover.offsetWidth || 245;
+    const popH = shotPopover.offsetHeight || 160;
+    const left = Math.min(
+      Math.max(12, rect.right - popW),
+      Math.max(12, window.innerWidth - popW - 12)
+    );
+    const top = Math.min(
+      Math.max(12, rect.bottom + 8),
+      Math.max(12, window.innerHeight - popH - 12)
+    );
+    shotPopover.style.left = `${Math.round(left)}px`;
+    shotPopover.style.top = `${Math.round(top)}px`;
+    shotPopover.style.right = "auto";
   });
 
   document.addEventListener("pointerdown", (e) => {
-    if (shotPopover && !shotPopover.hidden && !e.target.closest?.(".manga-shot-anchor")) {
+    if (
+      shotPopover &&
+      !shotPopover.hidden &&
+      !shotPopover.contains(e.target) &&
+      !btnScreenshot?.contains(e.target)
+    ) {
       hideShotPopover();
     }
   });
@@ -1422,7 +1441,7 @@ export function initManga({
     if (mangaView.hidden || !mangaDetail) return;
     if (getLayoutMode() === "vertical") return;
     if (cropMode || e.shiftKey || didJustDragCrop) return;
-    if (e.target.closest?.(".manga-ocr-box, #manga-text-bar, #manga-ocr-status, .manga-shot-anchor")) return;
+    if (e.target.closest?.(".manga-ocr-box, #manga-text-bar, #manga-ocr-status, #manga-shot-popover")) return;
 
     const rect = mangaViewport.getBoundingClientRect();
     const relX = (e.clientX - rect.left) / Math.max(1, rect.width);
