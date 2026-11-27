@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app import db
 
 ALLOWED_CATEGORIES = {"quote", "note", "expression"}
 ALLOWED_COLORS = {"", "yellow", "blue", "pink", "orange", "green", "purple"}
+_INLINE_HL_RE = re.compile(r"==(?:\[(?:yellow|blue|pink|orange|green|purple)\])?([\s\S]+?)==")
+
+
+def _compact_quote(text: str | None) -> str:
+    plain = _INLINE_HL_RE.sub(r"\1", text or "")
+    return re.sub(r"\s+", "", plain)
 
 _SELECT_JOIN = """
 SELECT n.*,
@@ -83,6 +90,7 @@ def create_note(
     note_text: str = "",
     category: str = "quote",
     color: str = "yellow",
+    replace_existing: bool = False,
 ) -> dict[str, Any]:
     """Create a saved highlight, quote, or free-form reading note."""
     clean_quote = (quote_text or "").strip()
@@ -98,6 +106,47 @@ def create_note(
         book_exists = conn.execute("SELECT 1 FROM books WHERE id = ?", (book_id,)).fetchone()
         if book_exists is None:
             raise LookupError("Book not found")
+
+        if replace_existing and clean_quote:
+            target_compact = _compact_quote(clean_quote)
+            existing_rows = conn.execute(
+                """
+                SELECT * FROM reader_notes
+                WHERE book_id = ? AND chapter_index = ?
+                ORDER BY updated_at DESC, id DESC
+                """,
+                (book_id, chapter_index),
+            ).fetchall()
+            matches = [
+                r
+                for r in existing_rows
+                if target_compact
+                and _compact_quote(r["quote_text"]) == target_compact
+                and (clean_sent_id is None or r["sent_id"] is None or r["sent_id"] == clean_sent_id)
+            ]
+            if matches:
+                primary = next((r for r in matches if (r["note_text"] or "").strip()), matches[0])
+                resolved_sent_id = primary["sent_id"] or clean_sent_id
+                conn.execute(
+                    """
+                    UPDATE reader_notes
+                    SET color = ?, sent_id = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (clean_col, resolved_sent_id, now, primary["id"]),
+                )
+                for other in matches:
+                    if other["id"] == primary["id"]:
+                        continue
+                    if not (other["note_text"] or "").strip():
+                        conn.execute("DELETE FROM reader_notes WHERE id = ?", (other["id"],))
+                    else:
+                        conn.execute(
+                            "UPDATE reader_notes SET color = ?, updated_at = ? WHERE id = ?",
+                            (clean_col, now, other["id"]),
+                        )
+                row = conn.execute(f"{_SELECT_JOIN} WHERE n.id = ?", (primary["id"],)).fetchone()
+                return dict(row)
 
         cur = conn.execute(
             """

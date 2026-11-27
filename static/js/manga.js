@@ -1381,6 +1381,7 @@ export function initManga({
           note_text: "",
           category: "quote",
           color,
+          replace_existing: true,
         });
         await refreshMangaNoteMarks();
         if (onHighlightCreatedCb) onHighlightCreatedCb();

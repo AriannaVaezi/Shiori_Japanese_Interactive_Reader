@@ -171,19 +171,20 @@ function applyChapterNoteHighlights(notes) {
   const sentList = [...contentEl.querySelectorAll(".sent")];
   for (const note of notes || []) {
     const color = HIGHLIGHT_COLORS.includes(note.color) ? note.color : "";
-    if (!color || !note.sent_id) continue;
-    const sentEl = sentList.find((el) => el.dataset.sentId === note.sent_id);
-    if (!sentEl) continue;
+    if (!color) continue;
+    const sentEl = note.sent_id
+      ? sentList.find((el) => el.dataset.sentId === note.sent_id) || null
+      : null;
 
-    const sentIdx = sentList.indexOf(sentEl);
-    const windowSents = sentList.slice(sentIdx, Math.min(sentList.length, sentIdx + 6));
     const wrapped =
       note.quote_text &&
-      applyQuoteHighlightToElements(windowSents, note.quote_text, {
+      applyQuoteHighlightToElements([contentEl], note.quote_text, {
         color,
         noteId: note.id,
+        anchorEl: sentEl,
       });
-    if (!wrapped) {
+    if (!wrapped && sentEl) {
+      sentEl.classList.remove(...HIGHLIGHT_COLORS.map((c) => `hl-${c}`));
       sentEl.classList.add("has-note", `hl-${color}`);
     }
   }
@@ -316,19 +317,23 @@ export function advanceChapter(delta) {
 }
 
 export function scrollToHighlight({ noteId = null, sentId = null } = {}) {
-  let target = null;
-  if (noteId != null) {
-    target = contentEl.querySelector(`mark.user-hl[data-note-id="${CSS.escape(String(noteId))}"]`);
+  const marks =
+    noteId != null
+      ? [...contentEl.querySelectorAll(`mark.user-hl[data-note-id="${CSS.escape(String(noteId))}"]`)]
+      : [];
+  const flashTargets = marks.length
+    ? marks
+    : sentId
+      ? [...contentEl.querySelectorAll(`.sent[data-sent-id="${CSS.escape(sentId)}"]`)]
+      : [];
+  if (!flashTargets.length) return;
+  flashTargets[0].scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+  for (const el of flashTargets) {
+    el.classList.remove("hl-jump-flash");
+    void el.offsetWidth;
+    el.classList.add("hl-jump-flash");
+    setTimeout(() => el.classList.remove("hl-jump-flash"), 1600);
   }
-  if (!target && sentId) {
-    target = contentEl.querySelector(`.sent[data-sent-id="${CSS.escape(sentId)}"]`);
-  }
-  if (!target) return;
-  target.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
-  target.classList.remove("hl-jump-flash");
-  void target.offsetWidth;
-  target.classList.add("hl-jump-flash");
-  setTimeout(() => target.classList.remove("hl-jump-flash"), 1600);
 }
 
 export function scrollToSentence(sentId) {
@@ -487,7 +492,13 @@ export function initReader({
     const startEl = startNode.nodeType === Node.ELEMENT_NODE ? startNode : startNode.parentElement;
     const common = range.commonAncestorContainer;
     const commonEl = common.nodeType === Node.ELEMENT_NODE ? common : common.parentElement;
-    const sentEl = commonEl?.closest?.(".sent") || startEl?.closest?.(".sent");
+    let sentEl = commonEl?.closest?.(".sent") || startEl?.closest?.(".sent") || null;
+    if (inReader && !sentEl && typeof range.intersectsNode === "function") {
+      sentEl = [...contentEl.querySelectorAll(".sent")].find((el) => range.intersectsNode(el)) || null;
+    }
+    const resolvedSentId = inManga
+      ? mangaTokensEl?.dataset.sentId || null
+      : sentEl?.dataset.sentId || null;
 
     suppressSelectionClickUntil = Date.now() + 250;
     const rect = range.getBoundingClientRect();
@@ -500,7 +511,7 @@ export function initReader({
       height: rect.height,
     };
     pendingSelection = {
-      sentId: sentEl?.dataset.sentId || null,
+      sentId: resolvedSentId,
       sentenceText: sentEl ? extractCleanText(sentEl) : cleanTarget,
       targetText: cleanTarget,
       anchorRect,
@@ -583,6 +594,7 @@ export function initReader({
           note_text: "",
           category: "quote",
           color,
+          replace_existing: true,
         });
         if (onHighlightCreatedCb) onHighlightCreatedCb();
       } catch {

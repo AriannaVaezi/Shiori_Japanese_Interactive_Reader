@@ -285,7 +285,7 @@ def get_chapter(book_id: int, chapter_index: int) -> dict[str, Any] | None:
             SELECT id, sent_id, quote_text, color, category
             FROM reader_notes
             WHERE book_id = ? AND chapter_index = ?
-            ORDER BY id ASC
+            ORDER BY updated_at ASC, id ASC
             """,
             (book_id, chapter_index),
         ).fetchall()

@@ -2120,5 +2120,161 @@ def test_manga_single_page_horizontal_layout_setting_and_assets(temp_env):
         assert "Cycle 2-Page Spread / 1-Page Horizontal / 1-Page Vertical (V)" in index_res.text
 
 
+def test_highlight_recolor_dedup_and_multisentence_assets(temp_env):
+    with TestClient(app) as client:
+        books = client.get("/api/books").json()["books"]
+        book1 = books[0]
+        ch1_idx = next(c["chapter_index"] for c in book1["chapters"] if c["title"] == "１")
+
+        # 1) Create multi-paragraph highlight with replace_existing=True
+        r1 = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s1",
+                "quote_text": "文一。\n文二。",
+                "color": "yellow",
+                "replace_existing": True,
+            },
+        )
+        assert r1.status_code == 200
+        hl_id = r1.json()["note"]["id"]
+        assert r1.json()["note"]["color"] == "yellow"
+
+        # 2) Recolor yellow -> pink with whitespace variation updates the same highlight row
+        r2 = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s1",
+                "quote_text": "文一。文二。",
+                "color": "pink",
+                "replace_existing": True,
+            },
+        )
+        assert r2.status_code == 200
+        assert r2.json()["note"]["id"] == hl_id
+        assert r2.json()["note"]["color"] == "pink"
+        notes_after_pink = [
+            n
+            for n in client.get(f"/api/notes?book_id={book1['id']}&chapter_index={ch1_idx}").json()["notes"]
+            if "文一" in n["quote_text"]
+        ]
+        assert len(notes_after_pink) == 1
+
+        # 3) Recolor pink -> yellow updates cleanly back to yellow with no duplicate rows
+        r3 = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s1",
+                "quote_text": "文一。\n文二。",
+                "color": "yellow",
+                "replace_existing": True,
+            },
+        )
+        assert r3.status_code == 200
+        assert r3.json()["note"]["id"] == hl_id
+        assert r3.json()["note"]["color"] == "yellow"
+        notes_after_yellow = [
+            n
+            for n in client.get(f"/api/notes?book_id={book1['id']}&chapter_index={ch1_idx}").json()["notes"]
+            if "文一" in n["quote_text"]
+        ]
+        assert len(notes_after_yellow) == 1
+
+        # 4) Legacy duplicate empty row + annotated note: keep annotated note and prune empty duplicate
+        dup_empty = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "quote_text": "重複チェック用の文。",
+                "color": "pink",
+                "replace_existing": False,
+            },
+        )
+        assert dup_empty.status_code == 200
+        empty_dup_id = dup_empty.json()["note"]["id"]
+
+        annotated = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "quote_text": "重複チェック用の文。",
+                "note_text": "keep me",
+                "color": "pink",
+                "replace_existing": False,
+            },
+        )
+        assert annotated.status_code == 200
+        annotated_id = annotated.json()["note"]["id"]
+
+        cleaned = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "quote_text": "重複チェック用の文。",
+                "color": "yellow",
+                "replace_existing": True,
+            },
+        )
+        assert cleaned.status_code == 200
+        kept_note = cleaned.json()["note"]
+        assert kept_note["id"] == annotated_id
+        assert kept_note["note_text"] == "keep me"
+        assert kept_note["color"] == "yellow"
+
+        all_chap_ids = {
+            n["id"]
+            for n in client.get(f"/api/notes?book_id={book1['id']}&chapter_index={ch1_idx}").json()["notes"]
+        }
+        assert annotated_id in all_chap_ids
+        assert empty_dup_id not in all_chap_ids
+
+        # 5) chapter_notes ordered updated_at ASC, id ASC so later updates win
+        note_a = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s2",
+                "quote_text": "順序確認の文。",
+                "color": "yellow",
+            },
+        ).json()["note"]
+        note_b = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "sent_id": f"c{ch1_idx}_s2",
+                "quote_text": "順序確認の文。",
+                "color": "pink",
+            },
+        ).json()["note"]
+        upd_a = client.put(f"/api/notes/{note_a['id']}", json={"color": "yellow"})
+        assert upd_a.status_code == 200
+
+        chap_notes = client.get(f"/api/books/{book1['id']}/chapters/{ch1_idx}").json()["chapter_notes"]
+        ordered_ids = [n["id"] for n in chap_notes]
+        assert ordered_ids.index(note_b["id"]) < ordered_ids.index(note_a["id"])
+
+        # 6) Static JS bundles serve non-nesting & multi-paragraph highlight code
+        state_js = client.get("/static/js/state.js")
+        assert state_js.status_code == 200
+        assert "compactDoc" in state_js.text
+        assert "anchorEl" in state_js.text
+
+        reader_js = client.get("/static/js/reader.js")
+        assert reader_js.status_code == 200
+        assert "replace_existing: true" in reader_js.text
+
+
 
 

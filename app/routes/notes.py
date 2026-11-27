@@ -18,6 +18,7 @@ class NoteCreateRequest(BaseModel):
     note_text: str = ""
     category: str = "quote"
     color: str = "yellow"
+    replace_existing: bool = False
 
 
 class NoteUpdateRequest(BaseModel):
@@ -59,6 +60,7 @@ def create_note(req: NoteCreateRequest):
             note_text=req.note_text,
             category=req.category,
             color=req.color,
+            replace_existing=req.replace_existing,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

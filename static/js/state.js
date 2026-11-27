@@ -215,8 +215,8 @@ export function applyRangeHighlightMarkup(rawText, plainStart, plainEnd, newColo
   const chars = [];
   const colors = [];
   for (const seg of segments) {
-    for (const ch of seg.text) {
-      chars.push(ch);
+    for (let idx = 0; idx < seg.text.length; idx++) {
+      chars.push(seg.text[idx]);
       colors.push(seg.color);
     }
   }
@@ -255,14 +255,20 @@ export function unwrapUserHighlights(rootEl) {
   });
 }
 
-export function applyQuoteHighlightToElements(containers, quoteText, { color = "yellow", noteId = null } = {}) {
+export function applyQuoteHighlightToElements(
+  containers,
+  quoteText,
+  { color = "yellow", noteId = null, anchorEl = null } = {}
+) {
   const cleanQuery = stripHighlightMarkup(quoteText).trim();
   const safeColor = HIGHLIGHT_COLORS.includes(color) ? color : null;
-  if (!cleanQuery || !safeColor || !containers?.length) return false;
+  const compactQuery = cleanQuery.replace(/\s+/g, "");
+  if (!compactQuery || !safeColor || !containers?.length) return false;
 
   const entries = [];
-  let totalLen = 0;
-  let concat = "";
+  const compactChars = [];
+  const compactMap = [];
+  let anchorCompactOffset = -1;
 
   for (const root of containers) {
     if (!root) continue;
@@ -278,29 +284,69 @@ export function applyQuoteHighlightToElements(containers, quoteText, { color = "
     });
     let textNode;
     while ((textNode = walker.nextNode())) {
+      if (anchorCompactOffset < 0 && anchorEl && anchorEl.contains(textNode)) {
+        anchorCompactOffset = compactChars.length;
+      }
       const val = textNode.nodeValue;
+      const entryIdx = entries.length;
       entries.push({
         node: textNode,
-        start: totalLen,
-        end: totalLen + val.length,
+        len: val.length,
+        isWhitespaceOnly: !/\S/.test(val),
+        parent: textNode.parentElement,
       });
-      concat += val;
-      totalLen += val.length;
+      for (let i = 0; i < val.length; i++) {
+        if (!/\s/.test(val[i])) {
+          compactChars.push(val[i]);
+          compactMap.push({ entryIdx, offset: i });
+        }
+      }
     }
   }
 
-  const matchStart = concat.indexOf(cleanQuery);
-  if (matchStart < 0) return false;
-  const matchEnd = matchStart + cleanQuery.length;
+  const compactDoc = compactChars.join("");
+  let matchIdx = -1;
+  if (anchorCompactOffset >= 0) {
+    matchIdx = compactDoc.indexOf(compactQuery, anchorCompactOffset);
+    if (matchIdx < 0 && anchorCompactOffset > 0) {
+      matchIdx = compactDoc.indexOf(
+        compactQuery,
+        Math.max(0, anchorCompactOffset - compactQuery.length)
+      );
+    }
+  }
+  if (matchIdx < 0) {
+    matchIdx = compactDoc.indexOf(compactQuery);
+  }
+  if (matchIdx < 0) return false;
 
+  const firstPos = compactMap[matchIdx];
+  const lastPos = compactMap[matchIdx + compactQuery.length - 1];
   const slices = [];
-  for (const entry of entries) {
-    if (entry.end <= matchStart || entry.start >= matchEnd) continue;
-    slices.push({
-      node: entry.node,
-      localStart: Math.max(0, matchStart - entry.start),
-      localEnd: Math.min(entry.end - entry.start, matchEnd - entry.start),
-    });
+  for (let eIdx = firstPos.entryIdx; eIdx <= lastPos.entryIdx; eIdx++) {
+    const entry = entries[eIdx];
+    if (eIdx > firstPos.entryIdx && eIdx < lastPos.entryIdx && entry.isWhitespaceOnly) {
+      const parent = entry.parent;
+      const isInterBlockContainer =
+        parent?.id === "reader-content" ||
+        Boolean(
+          parent?.querySelector?.(
+            ":scope > p, :scope > div, :scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6, :scope > ul, :scope > ol, :scope > blockquote, :scope > hr"
+          )
+        ) ||
+        (entry.node.nodeValue.includes("\n") &&
+          !parent?.closest?.(".sent, #manga-text-tokens"));
+      if (isInterBlockContainer) continue;
+    }
+    const localStart = eIdx === firstPos.entryIdx ? firstPos.offset : 0;
+    const localEnd = eIdx === lastPos.entryIdx ? lastPos.offset + 1 : entry.len;
+    if (localEnd > localStart) {
+      slices.push({
+        node: entry.node,
+        localStart,
+        localEnd,
+      });
+    }
   }
   if (!slices.length) return false;
 
@@ -313,11 +359,51 @@ export function applyQuoteHighlightToElements(containers, quoteText, { color = "
     if (s.localStart > 0) {
       target = target.splitText(s.localStart);
     }
-    const mark = document.createElement("mark");
-    mark.className = `user-hl hl-${safeColor}`;
-    if (noteId != null) mark.dataset.noteId = String(noteId);
-    target.parentNode.insertBefore(mark, target);
-    mark.appendChild(target);
+
+    const newMark = document.createElement("mark");
+    newMark.className = `user-hl hl-${safeColor}`;
+    if (noteId != null) newMark.dataset.noteId = String(noteId);
+
+    const parentMark =
+      target.parentNode?.nodeType === Node.ELEMENT_NODE &&
+      target.parentNode.matches?.("mark.user-hl")
+        ? target.parentNode
+        : null;
+
+    if (parentMark) {
+      const grandParent = parentMark.parentNode;
+      const beforeNodes = [];
+      const afterNodes = [];
+      let seenTarget = false;
+      for (const child of [...parentMark.childNodes]) {
+        if (child === target) {
+          seenTarget = true;
+        } else if (!seenTarget) {
+          beforeNodes.push(child);
+        } else {
+          afterNodes.push(child);
+        }
+      }
+      for (const n of beforeNodes) n.remove();
+      for (const n of afterNodes) n.remove();
+
+      if (beforeNodes.length) {
+        const beforeMark = parentMark.cloneNode(false);
+        beforeNodes.forEach((n) => beforeMark.appendChild(n));
+        grandParent.insertBefore(beforeMark, parentMark);
+      }
+      newMark.appendChild(target);
+      grandParent.insertBefore(newMark, parentMark);
+      if (afterNodes.length) {
+        const afterMark = parentMark.cloneNode(false);
+        afterNodes.forEach((n) => afterMark.appendChild(n));
+        grandParent.insertBefore(afterMark, parentMark);
+      }
+      parentMark.remove();
+    } else {
+      target.parentNode.insertBefore(newMark, target);
+      newMark.appendChild(target);
+    }
   }
   return true;
 }
