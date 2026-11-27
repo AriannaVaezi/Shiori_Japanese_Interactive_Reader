@@ -2538,6 +2538,7 @@ def test_async_llamacpp_startup_status_and_manga_screenshot(
         manga_js = client.get("/static/js/manga.js")
         assert manga_js.status_code == 200
         assert "/screenshot?pages=" in manga_js.text
+        assert "\nfunction hideShotPopover()" in manga_js.text
 
 
 
