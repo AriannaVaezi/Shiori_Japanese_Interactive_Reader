@@ -171,7 +171,7 @@
       </div>
 
       <div class="reader-bar-right">
-        <button id="btn-manga-layout" class="btn btn-pill" type="button" title="Toggle 2-Page Spread / 1-Page Vertical (V)">2-Page Spread</button>
+        <button id="btn-manga-layout" class="btn btn-pill" type="button" title="Cycle 2-Page Spread / 1-Page Horizontal / 1-Page Vertical (V)">2-Page Spread</button>
         <button id="btn-manga-offset" class="btn btn-pill" type="button" title="Toggle Cover Solo / Paired (S)">Cover: Solo</button>
         <button id="btn-manga-ocr-mode" class="btn btn-pill" type="button" title="Cycle speech bubble highlight mode">OCR: Hover</button>
         <button id="btn-manga-hide-marks" class="btn btn-pill" type="button" title="Hide highlights, note boxes, and OCR overlays for a clean view (H)">Marks: Shown</button>
@@ -203,6 +203,14 @@
         <span id="manga-text-source" class="pos-badge">Page 1</span>
         <span class="hint-text">Click a word to look up, or drag-select text for phrase tools</span>
         <div class="manga-text-bar-actions">
+          <div class="manga-hl-swatches" role="group" aria-label="Highlight bubble color">
+            <button class="hl-swatch-btn manga-hl-btn" type="button" data-color="yellow" title="Highlight Yellow" aria-label="Highlight Yellow"></button>
+            <button class="hl-swatch-btn manga-hl-btn" type="button" data-color="blue" title="Highlight Blue" aria-label="Highlight Blue"></button>
+            <button class="hl-swatch-btn manga-hl-btn" type="button" data-color="pink" title="Highlight Pink" aria-label="Highlight Pink"></button>
+            <button class="hl-swatch-btn manga-hl-btn" type="button" data-color="orange" title="Highlight Orange" aria-label="Highlight Orange"></button>
+            <button class="hl-swatch-btn manga-hl-btn" type="button" data-color="green" title="Highlight Green" aria-label="Highlight Green"></button>
+            <button class="hl-swatch-btn manga-hl-btn" type="button" data-color="purple" title="Highlight Purple" aria-label="Highlight Purple"></button>
+          </div>
           <button id="btn-manga-bar-chat" class="btn btn-pill" type="button" title="Ask a custom question without default prompt">Chat</button>
           <button id="btn-manga-bar-grammar" class="btn btn-pill" type="button" title="Break down grammar in English">? Grammar</button>
           <button id="btn-manga-bar-save" class="btn btn-pill" type="button" title="Save quote / note">★ Save</button>
@@ -263,6 +271,14 @@
 
   <!-- Text Selection Floating Action Bar -->
   <div id="selection-tooltip" class="selection-tooltip" hidden>
+    <div class="sel-hl-swatches" role="group" aria-label="Highlight selection color">
+      <button class="hl-swatch-btn" type="button" data-color="yellow" title="Highlight Yellow" aria-label="Highlight Yellow"></button>
+      <button class="hl-swatch-btn" type="button" data-color="blue" title="Highlight Blue" aria-label="Highlight Blue"></button>
+      <button class="hl-swatch-btn" type="button" data-color="pink" title="Highlight Pink" aria-label="Highlight Pink"></button>
+      <button class="hl-swatch-btn" type="button" data-color="orange" title="Highlight Orange" aria-label="Highlight Orange"></button>
+      <button class="hl-swatch-btn" type="button" data-color="green" title="Highlight Green" aria-label="Highlight Green"></button>
+      <button class="hl-swatch-btn" type="button" data-color="purple" title="Highlight Purple" aria-label="Highlight Purple"></button>
+    </div>
     <button id="btn-sel-lookup" class="sel-action-btn" type="button">Look Up</button>
     <button id="btn-sel-chat" class="sel-action-btn" type="button">Chat</button>
     <button id="btn-sel-ask-grammar" class="sel-action-btn" type="button">? Grammar</button>
@@ -504,11 +520,11 @@
     </div>
   </div>
 
-  <!-- Saved Quotes & Free-Form Notes Modal -->
+  <!-- Saved Highlights, Quotes & Free-Form Notes Modal -->
   <div id="notes-modal" class="modal-backdrop" hidden>
     <div class="modal-card modal-card-wide" role="dialog" aria-modal="true" aria-labelledby="notes-title">
       <div class="modal-header">
-        <h2 id="notes-title">栞 Saved Quotes &amp; Notes</h2>
+        <h2 id="notes-title">栞 Highlights &amp; Notes</h2>
         <button id="btn-close-notes" class="btn btn-icon" type="button" aria-label="Close">×</button>
       </div>
       <div class="modal-body">
@@ -524,19 +540,50 @@
             <button class="btn btn-pill note-cat-btn" type="button" data-cat="note">📝 Notes</button>
             <button class="btn btn-pill note-cat-btn" type="button" data-cat="expression">💡 Expressions</button>
           </div>
+          <div class="notes-color-filters" role="group" aria-label="Filter by highlight color">
+            <button class="btn btn-pill note-color-filter-btn active" type="button" data-color="">All Colors</button>
+            <button class="hl-swatch-btn note-color-filter-btn" type="button" data-color="yellow" title="Filter Yellow" aria-label="Filter Yellow"></button>
+            <button class="hl-swatch-btn note-color-filter-btn" type="button" data-color="blue" title="Filter Blue" aria-label="Filter Blue"></button>
+            <button class="hl-swatch-btn note-color-filter-btn" type="button" data-color="pink" title="Filter Pink" aria-label="Filter Pink"></button>
+            <button class="hl-swatch-btn note-color-filter-btn" type="button" data-color="orange" title="Filter Orange" aria-label="Filter Orange"></button>
+            <button class="hl-swatch-btn note-color-filter-btn" type="button" data-color="green" title="Filter Green" aria-label="Filter Green"></button>
+            <button class="hl-swatch-btn note-color-filter-btn" type="button" data-color="purple" title="Filter Purple" aria-label="Filter Purple"></button>
+          </div>
         </div>
 
         <form id="note-form" class="note-composer">
           <div id="note-composer-hint" class="hint-text" hidden>Open a book first to add a note linked to a chapter.</div>
           <div id="note-composer-fields" class="note-composer-fields">
+            <div class="note-inline-hl-bar">
+              <span class="hint-text">Highlight selected text in note:</span>
+              <button class="hl-swatch-btn note-inline-swatch-btn" type="button" data-hl-color="yellow" title="Highlight Yellow" aria-label="Highlight Yellow"></button>
+              <button class="hl-swatch-btn note-inline-swatch-btn" type="button" data-hl-color="blue" title="Highlight Blue" aria-label="Highlight Blue"></button>
+              <button class="hl-swatch-btn note-inline-swatch-btn" type="button" data-hl-color="pink" title="Highlight Pink" aria-label="Highlight Pink"></button>
+              <button class="hl-swatch-btn note-inline-swatch-btn" type="button" data-hl-color="orange" title="Highlight Orange" aria-label="Highlight Orange"></button>
+              <button class="hl-swatch-btn note-inline-swatch-btn" type="button" data-hl-color="green" title="Highlight Green" aria-label="Highlight Green"></button>
+              <button class="hl-swatch-btn note-inline-swatch-btn" type="button" data-hl-color="purple" title="Highlight Purple" aria-label="Highlight Purple"></button>
+              <button class="btn btn-ghost note-inline-clear-btn note-inline-swatch-btn" type="button" data-hl-color="" title="Remove inline highlight">Clear</button>
+            </div>
             <textarea id="input-note-quote" rows="2" placeholder="Optional passage or favorite quote from the book…"></textarea>
-            <textarea id="input-note-text" rows="2" placeholder="Write a personal note, summary, or reminder (even without looking up words)…"></textarea>
+            <textarea id="input-note-text" rows="2" placeholder="Write a personal note, summary, or reminder (select text above/here and pick a color to highlight inside your note)…"></textarea>
             <div class="note-composer-bottom">
-              <select id="select-note-category" aria-label="Note category">
-                <option value="quote">★ Favorite Quote</option>
-                <option value="note">📝 Reading / Study Note</option>
-                <option value="expression">💡 Expression / Idiom</option>
-              </select>
+              <div class="note-composer-meta">
+                <select id="select-note-category" aria-label="Note category">
+                  <option value="quote">★ Favorite Quote</option>
+                  <option value="note">📝 Reading / Study Note</option>
+                  <option value="expression">💡 Expression / Idiom</option>
+                </select>
+                <div class="note-composer-colors" role="group" aria-label="Card highlight color">
+                  <span class="hint-text">Color:</span>
+                  <button class="hl-swatch-btn note-color-pick-btn active" type="button" data-color="yellow" title="Yellow" aria-label="Yellow"></button>
+                  <button class="hl-swatch-btn note-color-pick-btn" type="button" data-color="blue" title="Blue" aria-label="Blue"></button>
+                  <button class="hl-swatch-btn note-color-pick-btn" type="button" data-color="pink" title="Pink" aria-label="Pink"></button>
+                  <button class="hl-swatch-btn note-color-pick-btn" type="button" data-color="orange" title="Orange" aria-label="Orange"></button>
+                  <button class="hl-swatch-btn note-color-pick-btn" type="button" data-color="green" title="Green" aria-label="Green"></button>
+                  <button class="hl-swatch-btn note-color-pick-btn" type="button" data-color="purple" title="Purple" aria-label="Purple"></button>
+                  <button class="btn btn-ghost note-color-pick-btn note-color-none-btn" type="button" data-color="" title="No Color">None</button>
+                </div>
+              </div>
               <div class="note-composer-actions">
                 <button id="btn-note-cancel-edit" class="btn btn-ghost" type="button" hidden>Cancel Edit</button>
                 <button id="btn-note-save" class="btn btn-primary" type="submit">Save Note</button>
@@ -548,6 +595,17 @@
         <div id="notes-status" class="inline-alert" hidden></div>
         <div id="notes-list" class="trouble-list"></div>
       </div>
+    </div>
+
+    <!-- Floating Inline Highlighter for Saved Note Cards -->
+    <div id="note-hl-popover" class="selection-tooltip note-hl-popover" hidden>
+      <button class="hl-swatch-btn note-card-hl-btn" type="button" data-color="yellow" title="Highlight Yellow" aria-label="Highlight Yellow"></button>
+      <button class="hl-swatch-btn note-card-hl-btn" type="button" data-color="blue" title="Highlight Blue" aria-label="Highlight Blue"></button>
+      <button class="hl-swatch-btn note-card-hl-btn" type="button" data-color="pink" title="Highlight Pink" aria-label="Highlight Pink"></button>
+      <button class="hl-swatch-btn note-card-hl-btn" type="button" data-color="orange" title="Highlight Orange" aria-label="Highlight Orange"></button>
+      <button class="hl-swatch-btn note-card-hl-btn" type="button" data-color="green" title="Highlight Green" aria-label="Highlight Green"></button>
+      <button class="hl-swatch-btn note-card-hl-btn" type="button" data-color="purple" title="Highlight Purple" aria-label="Highlight Purple"></button>
+      <button class="sel-action-btn note-card-hl-btn" type="button" data-color="" title="Remove Highlight">✕ Clear</button>
     </div>
   </div>
 

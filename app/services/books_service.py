@@ -280,6 +280,17 @@ def get_chapter(book_id: int, chapter_index: int) -> dict[str, Any] | None:
         ).fetchall()
         note_sent_ids = [r["sent_id"] for r in note_rows]
 
+        chapter_note_rows = conn.execute(
+            """
+            SELECT id, sent_id, quote_text, color, category
+            FROM reader_notes
+            WHERE book_id = ? AND chapter_index = ?
+            ORDER BY id ASC
+            """,
+            (book_id, chapter_index),
+        ).fetchall()
+        chapter_notes = [dict(r) for r in chapter_note_rows]
+
     return {
         "book_id": book_id,
         "book_title": book_row["title"],
@@ -290,6 +301,7 @@ def get_chapter(book_id: int, chapter_index: int) -> dict[str, Any] | None:
         "char_count": char_count,
         "grammar_sent_ids": grammar_sent_ids,
         "note_sent_ids": note_sent_ids,
+        "chapter_notes": chapter_notes,
         "sticky_keys": sticky_keys,
         "trouble_keys": trouble_keys,
         "chapter_trouble_count": chapter_trouble_count,

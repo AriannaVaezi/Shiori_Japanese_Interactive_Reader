@@ -1,4 +1,4 @@
-/** Manga reader view: RTL 2-page spreads, 1-page vertical scroll, exact aspect ratios, fullscreen, and CPU OCR overlays. */
+/** Manga reader view: RTL 2-page spreads, 1-page horizontal, 1-page vertical scroll, exact aspect ratios, fullscreen, and CPU OCR overlays. */
 
 import { api } from "./api.js";
 import {
@@ -10,7 +10,14 @@ import {
 } from "./grammar.js";
 import { closeLookup, openWordLookup } from "./lookup.js";
 import { hideSelectionTooltip } from "./reader.js";
-import { extractCleanText, state } from "./state.js";
+import {
+  HIGHLIGHT_COLORS,
+  applyQuoteHighlightToElements,
+  extractCleanText,
+  state,
+  stripHighlightMarkup,
+  unwrapUserHighlights,
+} from "./state.js";
 
 const libraryView = document.getElementById("library-view");
 const readerView = document.getElementById("reader-view");
@@ -59,6 +66,7 @@ let sessionNonce = 0;
 let loadedThreadKey = "";
 
 const ocrCache = new Map(); // pageIndex -> ocr result
+const mangaNotesByPage = new Map(); // pageIndex -> note[]
 let ocrQueue = [];
 let ocrRunning = false;
 let cropMode = false;
@@ -79,6 +87,14 @@ let onOpenTroubleCb = null;
 let onOpenSettingsCb = null;
 let onOpenNotesCb = null;
 let onPageChangedCb = null;
+let onHighlightCreatedCb = null;
+
+const MANGA_LAYOUTS = ["spread", "single", "vertical"];
+const MANGA_LAYOUT_LABELS = {
+  spread: "2-Page Spread",
+  single: "1-Page Horizontal",
+  vertical: "1-Page Vertical",
+};
 
 const OCR_MODES = ["hover", "always", "off"];
 const OCR_MODE_LABELS = {
@@ -88,7 +104,8 @@ const OCR_MODE_LABELS = {
 };
 
 function getLayoutMode() {
-  return state.settings.manga_layout === "vertical" ? "vertical" : "spread";
+  const mode = state.settings.manga_layout || "spread";
+  return MANGA_LAYOUTS.includes(mode) ? mode : "spread";
 }
 
 function getSpreadOffset() {
@@ -200,9 +217,9 @@ function applyToolbarLabels() {
   const ocrMode = getOcrOverlayMode();
   const hideMarks = String(state.settings.hide_annotations || "false") === "true";
 
-  btnLayout.textContent = layout === "vertical" ? "1-Page Vertical" : "2-Page Spread";
+  btnLayout.textContent = MANGA_LAYOUT_LABELS[layout];
   btnOffset.textContent = offset === 1 ? "Cover: Solo" : "Cover: Paired";
-  btnOffset.hidden = layout === "vertical";
+  btnOffset.hidden = layout !== "spread";
   btnOcrMode.textContent = OCR_MODE_LABELS[ocrMode];
   mangaStage.dataset.ocrOverlay = ocrMode;
   document.documentElement.dataset.hideAnnotations = hideMarks ? "true" : "false";
@@ -273,7 +290,7 @@ async function setActivePageContext(pageIndex, reloadThreads = true) {
 function updateSpreadNavDisabled() {
   if (!mangaDetail) return;
   const layout = getLayoutMode();
-  if (layout === "vertical") {
+  if (layout !== "spread") {
     btnPrev.disabled = currentPageIndex <= 0;
     btnNext.disabled = currentPageIndex >= mangaDetail.page_count - 1;
     return;
@@ -399,10 +416,59 @@ export function refreshMangaTokenHighlights() {
   });
 }
 
+function applyInspectorTokenHighlights() {
+  if (!textTokensEl) return;
+  unwrapUserHighlights(textTokensEl);
+  textTokensEl.classList.remove("has-note", ...HIGHLIGHT_COLORS.map((c) => `hl-${c}`));
+  if (!mangaDetail || !activeInspector) return;
+
+  const pageNotes = mangaNotesByPage.get(activeInspector.pageIndex) || [];
+  const matching = pageNotes.filter(
+    (n) => HIGHLIGHT_COLORS.includes(n.color) && n.sent_id === activeInspector.sentId
+  );
+  let fallbackColor = "";
+  for (const note of matching) {
+    const wrapped =
+      note.quote_text &&
+      applyQuoteHighlightToElements([textTokensEl], note.quote_text, {
+        color: note.color,
+        noteId: note.id,
+      });
+    if (!wrapped) {
+      fallbackColor = note.color;
+    }
+  }
+  if (fallbackColor) {
+    textTokensEl.classList.add("has-note", `hl-${fallbackColor}`);
+  }
+}
+
+export async function refreshMangaNoteMarks() {
+  if (!mangaDetail) return;
+  try {
+    const res = await api.listNotes({ bookId: mangaDetail.id, limit: 500 });
+    mangaNotesByPage.clear();
+    const chronological = [...(res.notes || [])].reverse();
+    for (const note of chronological) {
+      const pIdx = Number(note.chapter_index);
+      if (!mangaNotesByPage.has(pIdx)) mangaNotesByPage.set(pIdx, []);
+      mangaNotesByPage.get(pIdx).push(note);
+    }
+    mangaStage.querySelectorAll(".manga-page-frame").forEach((frame) => {
+      const pIdx = parseInt(frame.dataset.pageIndex, 10);
+      if (!Number.isNaN(pIdx)) renderPageOcrLayer(frame, pIdx);
+    });
+    applyInspectorTokenHighlights();
+  } catch {
+    // ignore transient note mark refresh errors
+  }
+}
+
 function renderTokensIntoBar(tokens, fallbackText) {
   textTokensEl.replaceChildren();
   if (!tokens || !tokens.length) {
     textTokensEl.textContent = fallbackText || "(No text recognized in selection — click Edit to enter text manually)";
+    applyInspectorTokenHighlights();
     return;
   }
 
@@ -422,6 +488,7 @@ function renderTokensIntoBar(tokens, fallbackText) {
     textTokensEl.appendChild(span);
   }
   refreshMangaTokenHighlights();
+  applyInspectorTokenHighlights();
 }
 
 export function closeMangaTextBar() {
@@ -469,6 +536,13 @@ function renderPageOcrLayer(frameEl, pageIndex) {
   if (!ocrData || !ocrData.ocr_available) return;
 
   const activeSentIds = new Set((state.grammarThreads || []).map((t) => t.sent_id));
+  const noteBySent = new Map();
+  for (const note of mangaNotesByPage.get(pageIndex) || []) {
+    if (note.sent_id && HIGHLIGHT_COLORS.includes(note.color)) {
+      noteBySent.set(note.sent_id, note);
+    }
+  }
+
   for (const blk of ocrData.blocks || []) {
     const pct = blk.box_pct;
     if (!pct || pct.length < 4) continue;
@@ -481,6 +555,11 @@ function renderPageOcrLayer(frameEl, pageIndex) {
     }
     if (activeSentIds.has(blk.block_id)) {
       btn.classList.add("has-grammar");
+    }
+    const matchedNote = noteBySent.get(blk.block_id);
+    if (matchedNote) {
+      btn.classList.add("has-note", `hl-${matchedNote.color}`);
+      btn.dataset.noteId = String(matchedNote.id);
     }
     btn.dataset.sentId = blk.block_id;
     btn.dataset.pageIndex = String(pageIndex);
@@ -633,6 +712,7 @@ function renderStage() {
 
   const layout = getLayoutMode();
   mangaStage.classList.toggle("mode-spread", layout === "spread");
+  mangaStage.classList.toggle("mode-single", layout === "single");
   mangaStage.classList.toggle("mode-vertical", layout === "vertical");
   applyToolbarLabels();
 
@@ -711,6 +791,20 @@ function renderStage() {
     return;
   }
 
+  if (layout === "single") {
+    const pageObj = mangaDetail.pages[currentPageIndex] || mangaDetail.pages[0];
+    if (pageObj) {
+      const group = document.createElement("div");
+      group.className = "manga-spread-group";
+      group.appendChild(createPageFrame(pageObj, { eager: true }));
+      mangaStage.appendChild(group);
+      requestAnimationFrame(layoutVisiblePages);
+      enqueueOcr([pageObj.page_index], { priority: true });
+      enqueueOcr([pageObj.page_index + 1, pageObj.page_index + 2], { priority: false });
+    }
+    return;
+  }
+
   // 2-Page Spread mode (Japanese RTL: [page N+1 on LEFT][page N on RIGHT])
   const sIdx = findSpreadIndexForPage(spreads, currentPageIndex);
   const spreadPages = spreads[sIdx] || [];
@@ -775,7 +869,7 @@ export async function goToMangaPage(targetPageIndex, { syncRender = true } = {})
 
 export function stepManga(delta) {
   if (!mangaDetail) return;
-  if (getLayoutMode() === "vertical") {
+  if (getLayoutMode() !== "spread") {
     goToMangaPage(currentPageIndex + delta);
     return;
   }
@@ -791,6 +885,7 @@ export async function openManga(bookId, startPage = null) {
   loadedThreadKey = "";
   ocrQueue = [];
   ocrCache.clear();
+  mangaNotesByPage.clear();
   cropMode = false;
   closeLookup();
   hideSelectionTooltip();
@@ -830,9 +925,85 @@ export async function openManga(bookId, startPage = null) {
   syncFullscreenUi();
 
   await setActivePageContext(clamped, true);
+  await refreshMangaNoteMarks();
   renderStage();
   lastProgressSavedMs = Date.now();
   await flushMangaProgress(false);
+}
+
+export async function jumpToMangaHighlight({
+  bookId,
+  pageIndex = 0,
+  sentId = null,
+  noteId = null,
+  quoteText = "",
+}) {
+  const targetPage = Math.max(0, Number(pageIndex) || 0);
+  if (!mangaDetail || mangaDetail.id !== bookId || mangaView.hidden) {
+    await openManga(bookId, targetPage);
+  } else {
+    await goToMangaPage(targetPage);
+  }
+  await refreshMangaNoteMarks();
+
+  if (!sentId && !stripHighlightMarkup(quoteText).trim()) return;
+
+  const frame = mangaStage.querySelector(`.manga-page-frame[data-page-index="${targetPage}"]`);
+  if (sentId && /^p\d+_b\d+$/.test(sentId) && !ocrCache.has(targetPage)) {
+    try {
+      const ocrRes = await api.ocrMangaPage(bookId, targetPage, false);
+      ocrCache.set(targetPage, ocrRes);
+      if (frame) renderPageOcrLayer(frame, targetPage);
+    } catch {
+      // fallback to saved quote text below
+    }
+  }
+
+  const ocrData = ocrCache.get(targetPage);
+  const blk = sentId
+    ? (ocrData?.blocks || []).find((b) => b.block_id === sentId)
+    : null;
+  const boxEl = sentId
+    ? mangaStage.querySelector(
+        `.manga-ocr-box[data-page-index="${targetPage}"][data-sent-id="${CSS.escape(sentId)}"]`
+      )
+    : null;
+
+  if (blk) {
+    await openMangaTextInspector({
+      pageIndex: targetPage,
+      sentId: blk.block_id,
+      text: blk.text,
+      tokens: blk.tokens || [],
+      boxEl,
+      label: `Page ${targetPage + 1} · Saved Highlight`,
+    });
+    if (boxEl) {
+      boxEl.classList.remove("hl-jump-flash");
+      void boxEl.offsetWidth;
+      boxEl.classList.add("hl-jump-flash");
+      setTimeout(() => boxEl.classList.remove("hl-jump-flash"), 1600);
+    }
+    return;
+  }
+
+  const cleanQuote = stripHighlightMarkup(quoteText).trim();
+  if (cleanQuote) {
+    let tokens = [];
+    try {
+      const tokRes = await api.tokenizeMangaText(cleanQuote);
+      tokens = tokRes.tokens || [];
+    } catch {
+      tokens = [];
+    }
+    await openMangaTextInspector({
+      pageIndex: targetPage,
+      sentId: sentId || (noteId != null ? `note_${noteId}` : `p${targetPage}_crop`),
+      text: cleanQuote,
+      tokens,
+      label: `Page ${targetPage + 1} · Saved Highlight`,
+    });
+  }
 }
 
 export async function closeMangaReader({ flush = true } = {}) {
@@ -842,6 +1013,7 @@ export async function closeMangaReader({ flush = true } = {}) {
   sessionNonce += 1;
   loadedThreadKey = "";
   ocrQueue = [];
+  mangaNotesByPage.clear();
   cropMode = false;
   disconnectVerticalObservers();
   if (isFullscreenActive()) {
@@ -968,6 +1140,7 @@ export function initManga({
   onOpenSettings,
   onOpenNotes,
   onPageChanged,
+  onHighlightCreated,
 }) {
   onBackLibraryCb = onBackToLibrary;
   onSaveNoteCb = onSaveNote;
@@ -975,6 +1148,7 @@ export function initManga({
   onOpenSettingsCb = onOpenSettings;
   onOpenNotesCb = onOpenNotes;
   onPageChangedCb = onPageChanged;
+  onHighlightCreatedCb = onHighlightCreated;
 
   const ro = new ResizeObserver(() => {
     if (!mangaView.hidden) {
@@ -1021,7 +1195,8 @@ export function initManga({
   });
 
   btnLayout.addEventListener("click", async () => {
-    const nextLayout = getLayoutMode() === "vertical" ? "spread" : "vertical";
+    const cur = getLayoutMode();
+    const nextLayout = MANGA_LAYOUTS[(MANGA_LAYOUTS.indexOf(cur) + 1) % MANGA_LAYOUTS.length];
     await persistMangaPref({ manga_layout: nextLayout });
     renderStage();
     updateSpreadNavDisabled();
@@ -1095,10 +1270,10 @@ export function initManga({
   });
   btnFullscreen.addEventListener("click", () => toggleMangaFullscreen());
 
-  // Click navigation in 2-page spread mode (Left = Next RTL, Right = Previous RTL)
+  // Click navigation in horizontal modes (Left = Next RTL, Right = Previous RTL)
   mangaViewport.addEventListener("click", (e) => {
     if (mangaView.hidden || !mangaDetail) return;
-    if (getLayoutMode() !== "spread") return;
+    if (getLayoutMode() === "vertical") return;
     if (cropMode || e.shiftKey || didJustDragCrop) return;
     if (e.target.closest?.(".manga-ocr-box, #manga-text-bar, #manga-ocr-status")) return;
 
@@ -1190,6 +1365,28 @@ export function initManga({
       sentId: activeInspector.sentId,
       quoteText: activeInspector.text,
       category: "quote",
+    });
+  });
+
+  textBar.querySelectorAll(".manga-hl-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!activeInspector || !mangaDetail) return;
+      const color = btn.dataset.color || "yellow";
+      try {
+        await api.createNote({
+          book_id: mangaDetail.id,
+          chapter_index: activeInspector.pageIndex,
+          sent_id: activeInspector.sentId,
+          quote_text: activeInspector.text,
+          note_text: "",
+          category: "quote",
+          color,
+        });
+        await refreshMangaNoteMarks();
+        if (onHighlightCreatedCb) onHighlightCreatedCb();
+      } catch (err) {
+        setOcrStatus(`Highlight failed: ${err.message}`, 3000);
+      }
     });
   });
 

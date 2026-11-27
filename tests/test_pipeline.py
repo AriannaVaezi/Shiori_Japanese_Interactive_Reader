@@ -1966,5 +1966,159 @@ def test_hide_annotations_setting_and_assets(temp_env):
         assert 'html[data-hide-annotations="true"] .sent.has-note' in css_res.text
 
 
+def test_multicolor_highlights_and_inline_note_filtering(temp_env):
+    with TestClient(app) as client:
+        books = client.get("/api/books").json()["books"]
+        book1 = books[0]
+        ch1_idx = next(c["chapter_index"] for c in book1["chapters"] if c["title"] == "１")
+
+        # 1) Create highlights across all supported colors + None ("") + invalid fallback
+        created = {}
+        for color in ("yellow", "blue", "pink", "orange", "green", "purple", ""):
+            res = client.post(
+                "/api/notes",
+                json={
+                    "book_id": book1["id"],
+                    "chapter_index": ch1_idx,
+                    "sent_id": f"c{ch1_idx}_s1",
+                    "quote_text": f"引用（{color or 'plain'}）",
+                    "note_text": f"Body for {color or 'plain'}",
+                    "category": "quote" if color else "note",
+                    "color": color,
+                },
+            )
+            assert res.status_code == 200
+            note = res.json()["note"]
+            assert note["color"] == color
+            assert note["media_type"] == "novel"
+            created[color] = note
+
+        fallback_res = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "quote_text": "フォールバック引用",
+                "color": "neon-invalid",
+            },
+        )
+        assert fallback_res.status_code == 200
+        assert fallback_res.json()["note"]["color"] == "yellow"
+
+        # 2) Inline ==[pink]...== inside note_text and quote_text
+        inline_note_res = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "quote_text": "Plain quote",
+                "note_text": "Remember ==[pink]key phrase== in this scene.",
+                "category": "note",
+                "color": "blue",
+            },
+        )
+        assert inline_note_res.status_code == 200
+        inline_note = inline_note_res.json()["note"]
+
+        inline_quote_res = client.post(
+            "/api/notes",
+            json={
+                "book_id": book1["id"],
+                "chapter_index": ch1_idx,
+                "quote_text": "Contains ==[pink]highlighted quote== inside.",
+                "note_text": "Commentary",
+                "category": "expression",
+                "color": "green",
+            },
+        )
+        assert inline_quote_res.status_code == 200
+        inline_quote = inline_quote_res.json()["note"]
+
+        # 3) PUT update color + inline ==[purple]...== markup
+        upd_res = client.put(
+            f"/api/notes/{created['']['id']}",
+            json={
+                "color": "orange",
+                "note_text": "Updated with ==[purple]violet emphasis== inside.",
+            },
+        )
+        assert upd_res.status_code == 200
+        updated_note = upd_res.json()["note"]
+        assert updated_note["color"] == "orange"
+        assert "==[purple]violet emphasis==" in updated_note["note_text"]
+
+        # 4) Filter by color matches card color AND inline ==[color]...== markup
+        pink_notes = client.get(
+            f"/api/notes?book_id={book1['id']}&color=pink"
+        ).json()["notes"]
+        pink_ids = {n["id"] for n in pink_notes}
+        assert created["pink"]["id"] in pink_ids
+        assert inline_note["id"] in pink_ids
+        assert inline_quote["id"] in pink_ids
+        assert created["blue"]["id"] not in pink_ids
+        assert created["green"]["id"] not in pink_ids
+
+        purple_notes = client.get(
+            f"/api/notes?book_id={book1['id']}&color=purple"
+        ).json()["notes"]
+        purple_ids = {n["id"] for n in purple_notes}
+        assert created["purple"]["id"] in purple_ids
+        assert updated_note["id"] in purple_ids
+
+        # 5) Chapter endpoint exposes chapter_notes with highlight colors for fast re-rendering
+        chap_payload = client.get(f"/api/books/{book1['id']}/chapters/{ch1_idx}").json()
+        chap_notes = chap_payload["chapter_notes"]
+        by_id = {n["id"]: n for n in chap_notes}
+        assert by_id[created["pink"]["id"]]["color"] == "pink"
+        assert by_id[created["pink"]["id"]]["sent_id"] == f"c{ch1_idx}_s1"
+        assert by_id[created["pink"]["id"]]["quote_text"] == "引用（pink）"
+        assert by_id[updated_note["id"]]["color"] == "orange"
+
+        # 6) Frontend templates & CSS include multi-color highlight controls
+        index_res = client.get("/")
+        assert index_res.status_code == 200
+        assert "hl-swatch-btn" in index_res.text
+        assert "note-color-filter-btn" in index_res.text
+        assert 'id="note-hl-popover"' in index_res.text
+
+        css_res = client.get("/static/css/app.css")
+        assert css_res.status_code == 200
+        assert "--hl-purple-solid" in css_res.text
+        assert "mark.user-hl.hl-pink" in css_res.text
+        assert 'html[data-hide-annotations="true"] mark.user-hl' in css_res.text
+
+
+def test_manga_single_page_horizontal_layout_setting_and_assets(temp_env):
+    with TestClient(app) as client:
+        res_single = client.put("/api/settings", json={"manga_layout": "single"})
+        assert res_single.status_code == 200
+        assert res_single.json()["manga_layout"] == "single"
+
+        fetched = client.get("/api/settings")
+        assert fetched.status_code == 200
+        assert fetched.json()["manga_layout"] == "single"
+
+        res_vertical = client.put("/api/settings", json={"manga_layout": "vertical"})
+        assert res_vertical.status_code == 200
+        assert res_vertical.json()["manga_layout"] == "vertical"
+
+        res_invalid = client.put("/api/settings", json={"manga_layout": "invalid-mode"})
+        assert res_invalid.status_code == 200
+        assert res_invalid.json()["manga_layout"] == "spread"
+
+        manga_js = client.get("/static/js/manga.js")
+        assert manga_js.status_code == 200
+        assert "1-Page Horizontal" in manga_js.text
+        assert "mode-single" in manga_js.text
+
+        css_res = client.get("/static/css/app.css")
+        assert css_res.status_code == 200
+        assert ".manga-stage.mode-single" in css_res.text
+
+        index_res = client.get("/")
+        assert index_res.status_code == 200
+        assert "Cycle 2-Page Spread / 1-Page Horizontal / 1-Page Vertical (V)" in index_res.text
+
+
 
 

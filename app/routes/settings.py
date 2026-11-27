@@ -107,6 +107,9 @@ async def put_settings(req: SettingsUpdateRequest):
         if key in config.ALLOWED_SETTING_KEYS:
             updates[key] = str(val)
 
+    if "manga_layout" in updates and updates["manga_layout"] not in {"spread", "single", "vertical"}:
+        updates["manga_layout"] = "spread"
+
     saved = db.update_settings(updates)
     if (
         saved.get("llm_provider", "").strip().lower() == "llamacpp"

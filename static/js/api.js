@@ -144,11 +144,12 @@ export const api = {
     params.set("limit", String(limit));
     return request(`/api/quiz/history?${params.toString()}`);
   },
-  listNotes({ bookId = null, chapterIndex = null, category = "", limit = 200 } = {}) {
+  listNotes({ bookId = null, chapterIndex = null, category = "", color = "", limit = 200 } = {}) {
     const params = new URLSearchParams();
     if (bookId != null) params.set("book_id", String(bookId));
     if (chapterIndex != null) params.set("chapter_index", String(chapterIndex));
     if (category) params.set("category", category);
+    if (color) params.set("color", color);
     params.set("limit", String(limit));
     return request(`/api/notes?${params.toString()}`);
   },

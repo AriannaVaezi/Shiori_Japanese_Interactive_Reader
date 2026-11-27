@@ -1,4 +1,4 @@
-"""Saved book passages, quotes, and free-form study notes service."""
+"""Saved book passages, quotes, highlights, and free-form study notes service."""
 
 from __future__ import annotations
 
@@ -7,10 +7,12 @@ from typing import Any
 from app import db
 
 ALLOWED_CATEGORIES = {"quote", "note", "expression"}
+ALLOWED_COLORS = {"", "yellow", "blue", "pink", "orange", "green", "purple"}
 
 _SELECT_JOIN = """
 SELECT n.*,
        b.title AS book_title,
+       b.media_type AS media_type,
        c.title AS chapter_title
 FROM reader_notes n
 JOIN books b ON b.id = n.book_id
@@ -23,14 +25,22 @@ def _clean_category(category: str | None) -> str:
     return val if val in ALLOWED_CATEGORIES else "quote"
 
 
+def _clean_color(color: str | None, default: str = "yellow") -> str:
+    if color is None:
+        return default
+    val = color.strip().lower()
+    return val if val in ALLOWED_COLORS else default
+
+
 def list_notes(
     *,
     book_id: int | None = None,
     chapter_index: int | None = None,
     category: str | None = None,
+    color: str | None = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
-    """Return saved quotes and notes filtered optionally by book, chapter, or category."""
+    """Return saved highlights and notes filtered optionally by book, chapter, category, or color."""
     clauses: list[str] = []
     params: list[Any] = []
     if book_id is not None:
@@ -42,6 +52,11 @@ def list_notes(
     if category and category.strip().lower() in ALLOWED_CATEGORIES:
         clauses.append("n.category = ?")
         params.append(category.strip().lower())
+    clean_color = (color or "").strip().lower()
+    if clean_color and clean_color in ALLOWED_COLORS:
+        pattern = f"%==[{clean_color}]%"
+        clauses.append("(n.color = ? OR n.note_text LIKE ? OR n.quote_text LIKE ?)")
+        params.extend((clean_color, pattern, pattern))
 
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(limit)
@@ -67,13 +82,15 @@ def create_note(
     quote_text: str = "",
     note_text: str = "",
     category: str = "quote",
+    color: str = "yellow",
 ) -> dict[str, Any]:
-    """Create a saved quote or free-form reading note."""
+    """Create a saved highlight, quote, or free-form reading note."""
     clean_quote = (quote_text or "").strip()
     clean_note = (note_text or "").strip()
     if not clean_quote and not clean_note:
         raise ValueError("Provide a quote or a note before saving.")
     clean_cat = _clean_category(category)
+    clean_col = _clean_color(color, default="yellow")
     clean_sent_id = (sent_id or "").strip() or None
     now = db.utc_now_iso()
 
@@ -85,8 +102,8 @@ def create_note(
         cur = conn.execute(
             """
             INSERT INTO reader_notes
-                (book_id, chapter_index, sent_id, quote_text, note_text, category, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (book_id, chapter_index, sent_id, quote_text, note_text, category, color, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 book_id,
@@ -95,6 +112,7 @@ def create_note(
                 clean_quote,
                 clean_note,
                 clean_cat,
+                clean_col,
                 now,
                 now,
             ),
@@ -110,8 +128,9 @@ def update_note(
     quote_text: str | None = None,
     note_text: str | None = None,
     category: str | None = None,
+    color: str | None = None,
 ) -> dict[str, Any] | None:
-    """Update an existing quote or reading note."""
+    """Update an existing quote, highlight color, or reading note."""
     with db.get_conn() as conn:
         existing = conn.execute("SELECT * FROM reader_notes WHERE id = ?", (note_id,)).fetchone()
         if existing is None:
@@ -122,15 +141,17 @@ def update_note(
         if not new_quote and not new_note:
             raise ValueError("Provide a quote or a note before saving.")
         new_cat = existing["category"] if category is None else _clean_category(category)
+        existing_color = existing["color"] if "color" in existing.keys() else "yellow"
+        new_col = existing_color if color is None else _clean_color(color, default=existing_color or "yellow")
         now = db.utc_now_iso()
 
         conn.execute(
             """
             UPDATE reader_notes
-            SET quote_text = ?, note_text = ?, category = ?, updated_at = ?
+            SET quote_text = ?, note_text = ?, category = ?, color = ?, updated_at = ?
             WHERE id = ?
             """,
-            (new_quote, new_note, new_cat, now, note_id),
+            (new_quote, new_note, new_cat, new_col, now, note_id),
         )
         row = conn.execute(f"{_SELECT_JOIN} WHERE n.id = ?", (note_id,)).fetchone()
     return dict(row) if row else None

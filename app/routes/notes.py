@@ -1,4 +1,4 @@
-"""Saved quotes and free-form reading notes routes."""
+"""Saved quotes, colored highlights, and free-form reading notes routes."""
 
 from __future__ import annotations
 
@@ -17,12 +17,14 @@ class NoteCreateRequest(BaseModel):
     quote_text: str = ""
     note_text: str = ""
     category: str = "quote"
+    color: str = "yellow"
 
 
 class NoteUpdateRequest(BaseModel):
     quote_text: str | None = None
     note_text: str | None = None
     category: str | None = None
+    color: str | None = None
 
 
 @router.get("")
@@ -30,14 +32,16 @@ def list_notes(
     book_id: int | None = None,
     chapter_index: int | None = None,
     category: str | None = None,
+    color: str | None = None,
     limit: int = 200,
 ):
-    """Return saved book quotes and study notes."""
+    """Return saved book highlights and study notes."""
     return {
         "notes": notes_service.list_notes(
             book_id=book_id,
             chapter_index=chapter_index,
             category=category,
+            color=color,
             limit=max(1, min(limit, 500)),
         )
     }
@@ -54,6 +58,7 @@ def create_note(req: NoteCreateRequest):
             quote_text=req.quote_text,
             note_text=req.note_text,
             category=req.category,
+            color=req.color,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -64,13 +69,14 @@ def create_note(req: NoteCreateRequest):
 
 @router.put("/{note_id}")
 def update_note(note_id: int, req: NoteUpdateRequest):
-    """Edit an existing quote or reading note."""
+    """Edit an existing quote, highlight color, or reading note."""
     try:
         note = notes_service.update_note(
             note_id,
             quote_text=req.quote_text,
             note_text=req.note_text,
             category=req.category,
+            color=req.color,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

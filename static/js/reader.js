@@ -8,7 +8,14 @@ import {
   openGrammarForSentence,
 } from "./grammar.js";
 import { closeLookup, openSelectionLookup, openWordLookup } from "./lookup.js";
-import { extractCleanText, extractRangeCleanText, state } from "./state.js";
+import {
+  HIGHLIGHT_COLORS,
+  applyQuoteHighlightToElements,
+  extractCleanText,
+  extractRangeCleanText,
+  state,
+  unwrapUserHighlights,
+} from "./state.js";
 
 const libraryView = document.getElementById("library-view");
 const readerView = document.getElementById("reader-view");
@@ -45,6 +52,7 @@ let onChapterQuizCb = null;
 let onSaveNoteCb = null;
 let onChapterOpenedCb = null;
 let onOpenMangaCb = null;
+let onHighlightCreatedCb = null;
 let pendingSelection = null;
 let saveScrollTimer = null;
 let lastProgressSavedMs = Date.now();
@@ -144,7 +152,7 @@ export function hideSelectionTooltip() {
   pendingSelection = null;
 }
 
-function applyTokenHighlights(troubleKeys, stickyKeys, noteSentIds) {
+function applyTokenHighlights(troubleKeys, stickyKeys) {
   const troubleSet = new Set(troubleKeys || []);
   const stickySet = new Set(stickyKeys || []);
   contentEl.querySelectorAll(".tok").forEach((el) => {
@@ -152,16 +160,37 @@ function applyTokenHighlights(troubleKeys, stickyKeys, noteSentIds) {
     el.classList.toggle("trouble-word", troubleSet.has(key));
     el.classList.toggle("sticky-word", stickySet.has(key));
   });
-  if (noteSentIds != null) {
-    const noteSet = new Set(noteSentIds);
-    contentEl.querySelectorAll(".sent").forEach((el) => {
-      el.classList.toggle("has-note", noteSet.has(el.dataset.sentId));
-    });
+}
+
+function applyChapterNoteHighlights(notes) {
+  unwrapUserHighlights(contentEl);
+  contentEl.querySelectorAll(".sent").forEach((el) => {
+    el.classList.remove("has-note", ...HIGHLIGHT_COLORS.map((c) => `hl-${c}`));
+  });
+
+  const sentList = [...contentEl.querySelectorAll(".sent")];
+  for (const note of notes || []) {
+    const color = HIGHLIGHT_COLORS.includes(note.color) ? note.color : "";
+    if (!color || !note.sent_id) continue;
+    const sentEl = sentList.find((el) => el.dataset.sentId === note.sent_id);
+    if (!sentEl) continue;
+
+    const sentIdx = sentList.indexOf(sentEl);
+    const windowSents = sentList.slice(sentIdx, Math.min(sentList.length, sentIdx + 6));
+    const wrapped =
+      note.quote_text &&
+      applyQuoteHighlightToElements(windowSents, note.quote_text, {
+        color,
+        noteId: note.id,
+      });
+    if (!wrapped) {
+      sentEl.classList.add("has-note", `hl-${color}`);
+    }
   }
 }
 
 export async function refreshChapterHighlights() {
-  if (!state.currentBook || !state.currentChapter) return;
+  if (!state.currentBook || !state.currentChapter || readerView.hidden) return;
   try {
     const [troubleRes, notesRes] = await Promise.all([
       api.getTrouble({
@@ -182,8 +211,8 @@ export async function refreshChapterHighlights() {
     const stickyKeys = active
       .filter((i) => i.item_type === "word" && i.trouble_score >= 3.0)
       .map((i) => i.item_key);
-    const noteSentIds = (notesRes.notes || []).map((n) => n.sent_id).filter(Boolean);
-    applyTokenHighlights(troubleKeys, stickyKeys, noteSentIds);
+    applyTokenHighlights(troubleKeys, stickyKeys);
+    applyChapterNoteHighlights([...(notesRes.notes || [])].reverse());
   } catch {
     // ignore transient highlight refresh error
   }
@@ -225,9 +254,9 @@ export async function openChapter(bookId, chapterIndex, restoreScrollRatio = 0) 
 
   applyTokenHighlights(
     chapter.trouble_keys || [],
-    chapter.sticky_keys || [],
-    chapter.note_sent_ids || []
+    chapter.sticky_keys || []
   );
+  applyChapterNoteHighlights(chapter.chapter_notes || []);
   await loadChapterGrammarThreads(bookId, chapterIndex);
   updateNavControls();
   if (onChapterOpenedCb) onChapterOpenedCb();
@@ -286,18 +315,40 @@ export function advanceChapter(delta) {
   }
 }
 
-export function scrollToSentence(sentId) {
-  if (!sentId) return;
-  const el = contentEl.querySelector(`.sent[data-sent-id="${CSS.escape(sentId)}"]`);
-  el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+export function scrollToHighlight({ noteId = null, sentId = null } = {}) {
+  let target = null;
+  if (noteId != null) {
+    target = contentEl.querySelector(`mark.user-hl[data-note-id="${CSS.escape(String(noteId))}"]`);
+  }
+  if (!target && sentId) {
+    target = contentEl.querySelector(`.sent[data-sent-id="${CSS.escape(sentId)}"]`);
+  }
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+  target.classList.remove("hl-jump-flash");
+  void target.offsetWidth;
+  target.classList.add("hl-jump-flash");
+  setTimeout(() => target.classList.remove("hl-jump-flash"), 1600);
 }
 
-export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapterOpened, onOpenManga }) {
+export function scrollToSentence(sentId) {
+  scrollToHighlight({ sentId });
+}
+
+export function initReader({
+  onBackToLibrary,
+  onChapterQuiz,
+  onSaveNote,
+  onChapterOpened,
+  onOpenManga,
+  onHighlightCreated,
+}) {
   onBackLibraryCb = onBackToLibrary;
   onChapterQuizCb = onChapterQuiz;
   onSaveNoteCb = onSaveNote;
   onChapterOpenedCb = onChapterOpened;
   onOpenMangaCb = onOpenManga;
+  onHighlightCreatedCb = onHighlightCreated;
 
   const btnChapterQuiz = document.getElementById("btn-chapter-quiz");
   btnChapterQuiz?.addEventListener("click", () => {
@@ -509,6 +560,34 @@ export function initReader({ onBackToLibrary, onChapterQuiz, onSaveNote, onChapt
       sentId: payload.sentId,
       quoteText: payload.targetText,
       category: "quote",
+    });
+  });
+
+  selectionTooltip.querySelectorAll(".sel-hl-swatches .hl-swatch-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!pendingSelection) return;
+      const color = btn.dataset.color || "yellow";
+      const payload = { ...pendingSelection };
+      hideSelectionTooltip();
+      window.getSelection()?.removeAllRanges();
+      closeLookup();
+      const bookId = state.currentBook?.id ?? null;
+      const chapterIndex = state.currentChapter?.chapter_index ?? null;
+      if (bookId == null || chapterIndex == null) return;
+      try {
+        await api.createNote({
+          book_id: bookId,
+          chapter_index: chapterIndex,
+          sent_id: payload.sentId || null,
+          quote_text: payload.targetText,
+          note_text: "",
+          category: "quote",
+          color,
+        });
+        if (onHighlightCreatedCb) onHighlightCreatedCb();
+      } catch {
+        // ignore transient create error
+      }
     });
   });
 

@@ -8,7 +8,9 @@ import {
   closeMangaReader,
   goToMangaPage,
   initManga,
+  jumpToMangaHighlight,
   openManga,
+  refreshMangaNoteMarks,
   refreshMangaTokenHighlights,
 } from "./manga.js";
 import { initMiniGame, launchQuiz } from "./minigame.js";
@@ -20,7 +22,7 @@ import {
   openBook,
   openChapter,
   refreshChapterHighlights,
-  scrollToSentence,
+  scrollToHighlight,
 } from "./reader.js";
 import { closeSettingsModal, initSettings, openSettingsModal } from "./settings.js";
 import { state } from "./state.js";
@@ -43,6 +45,7 @@ async function leaveReaderToLibrary() {
 function refreshActiveHighlights() {
   refreshChapterHighlights();
   refreshMangaTokenHighlights();
+  refreshMangaNoteMarks();
 }
 
 async function resolveMediaType(bookId) {
@@ -80,18 +83,19 @@ async function bootstrap() {
     onHighlightsChanged: refreshActiveHighlights,
   });
   initNotes({
-    onJumpToNote: async ({ bookId, chapterIndex, sentId }) => {
+    onJumpToNote: async ({ bookId, chapterIndex, sentId, noteId, quoteText }) => {
       const mediaType = await resolveMediaType(bookId);
       const sameBook = state.currentBook?.id === bookId;
       const sameChap = state.currentChapter?.chapter_index === chapterIndex;
 
       if (mediaType === "manga") {
-        const inMangaView = !document.getElementById("manga-view").hidden;
-        if (!sameBook || !inMangaView) {
-          await openManga(bookId, chapterIndex);
-        } else if (!sameChap) {
-          await goToMangaPage(chapterIndex);
-        }
+        await jumpToMangaHighlight({
+          bookId,
+          pageIndex: chapterIndex,
+          sentId,
+          noteId,
+          quoteText,
+        });
         return;
       }
 
@@ -101,9 +105,7 @@ async function bootstrap() {
       } else if (!sameChap) {
         await openChapter(bookId, chapterIndex, 0);
       }
-      if (sentId) {
-        requestAnimationFrame(() => scrollToSentence(sentId));
-      }
+      requestAnimationFrame(() => scrollToHighlight({ noteId, sentId }));
     },
     onNotesChanged: refreshActiveHighlights,
   });
@@ -128,6 +130,10 @@ async function bootstrap() {
     onBackToLibrary: () => showLibraryView(),
     onChapterQuiz: (triggerType) => launchQuiz(triggerType),
     onSaveNote: (ctx) => openNotesModal(ctx),
+    onHighlightCreated: () => {
+      refreshActiveHighlights();
+      refreshNotesBadge();
+    },
     onOpenManga: (bookId, pageIdx) => openManga(bookId, pageIdx),
     onChapterOpened: () => {
       refreshTroubleBadge();
@@ -138,6 +144,10 @@ async function bootstrap() {
   initManga({
     onBackToLibrary: () => showLibraryView(),
     onSaveNote: (ctx) => openNotesModal(ctx),
+    onHighlightCreated: () => {
+      refreshActiveHighlights();
+      refreshNotesBadge();
+    },
     onOpenTrouble: openTroubleModal,
     onOpenSettings: openSettingsModal,
     onOpenNotes: () => openNotesModal(),
@@ -145,6 +155,7 @@ async function bootstrap() {
       refreshTroubleBadge();
       refreshNotesBadge();
       refreshMangaTokenHighlights();
+      refreshMangaNoteMarks();
     },
   });
   initLibrary({

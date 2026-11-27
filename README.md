@@ -16,7 +16,7 @@ A local web app for learning Japanese by reading your own EPUB books and EPUB/CB
   - **Themes & Typography:** `Paper`, `Sepia`, and `Dark` themes, adjustable font size (`A-` / `A+`), **`Marks: Shown / Hidden`** (`H`) clean-view toggle (hides note highlights, grammar marks, and trouble underlines without deleting saved data), and automatic scroll-position + active-reading-time persistence per book.
 
 ### 1b. Manga Reader (`.epub` & `.cbz`)
-- **2-Page RTL Spreads & 1-Page Vertical Mode:** Switch anytime between authentic Japanese right-to-left **2-Page Spreads** (with automatic solo handling for wide spreads and a **`Cover: Solo` / `Cover: Paired`** offset toggle) and seamless **1-Page Vertical** scroll (`V`).
+- **2-Page RTL Spreads, 1-Page Horizontal & 1-Page Vertical Modes (`V`):** Cycle anytime between authentic Japanese right-to-left **2-Page Spreads** (with automatic solo handling for wide spreads and a **`Cover: Solo` / `Cover: Paired`** offset toggle), focused **1-Page Horizontal** page-by-page navigation, and seamless **1-Page Vertical** scroll.
 - **Original Aspect Ratio & Fullscreen (`F`):** Images always preserve their exact native aspect ratio without cropping or distortion. Enter **Fullscreen** (`F`) for an uncluttered dark view of the pages where the top toolbar auto-hides cleanly (hover the top edge to reveal) while word lookup popovers, grammar chat, and modals remain usable right over the artwork.
 - **100% Local Speech-Bubble & Crop OCR + Clean View (`H`):** When optional `manga-ocr` extras are installed (`uv sync --extra manga-ocr`), OCR runs completely **locally on your CPU** via `mokuro` + `manga-ocr` using cached open-source weights (zero cloud OCR API calls, leaving GPU VRAM free for local LLMs) and caches clickable speech-bubble overlays in SQLite. You can also toggle **`Marks: Hidden`** (`H`) anytime for an unmarked view of the artwork (hiding note boxes, highlights, and speech-bubble overlays), crop any box anytime with **`✂ Select Area`** (`C`) or **`Shift + Drag`**, inspect clickable `SudachiPy` tokens, edit OCR text inline if needed, highlight substrings for **`Look Up` / `Chat` / `? Grammar` / `★ Save`**, and click the left/right edges (`←` / `→` / `Space`) to turn pages.
 
@@ -31,10 +31,10 @@ A local web app for learning Japanese by reading your own EPUB books and EPUB/CB
   - **`Look Up`**: Directly opens the 2-step lookup popover for any manually selected text span (helpful if a compound or phrase wasn't tokenized as a single clickable word).
 - Ask follow-up questions in multi-turn conversations, browse saved **Chapter Notes**, and jump back to highlighted sentences.
 
-### 4. Saved Quotes & Free-Form Notes (`栞 Notes`)
-- **Highlight & Save:** Select any passage (1–1,500 characters, including multi-sentence quotes) and click **`★ Save`**, or click **`★ Save Note`** inside a word lookup card.
-- **No Lookup Required:** Open **`栞 Notes`** from the reader bar or library header anytime to write standalone reading reflections, chapter summaries, or expressions without looking up a single word.
-- **Organize & Jump Back:** Tag entries as **Favorite Quote**, **Reading / Study Note**, or **Expression / Idiom**, filter by scope (`This Chapter` / `This Book` / `All Books`) and category, edit or delete entries, and click **`Jump`** to scroll straight back to the saved sentence.
+### 4. Multi-Color Highlights & Free-Form Notes (`栞 Highlights & Notes`)
+- **6-Color 1-Click Highlights (Novels & Manga):** Select any passage in a novel (1–1,500 characters) or OCR text in the manga text inspector bar and click one of the **6 color swatches** (`yellow`, `blue`, `pink`, `orange`, `green`, `purple`) to highlight and save it immediately without leaving the page—or click **`★ Note`** / **`★ Save Note`** inside a lookup card to attach a colored highlight with commentary.
+- **No Lookup Required & Inline Passage Highlights:** Open **`栞 Highlights & Notes`** anytime to write free-form notes or color-highlight substrings inside either your note body or saved passage (`yellow`, `blue`, `pink`, `orange`, `green`, `purple`, plus `Clear`) via the composer toolbar or by dragging over text on any saved card.
+- **Filter & Jump Straight Back:** Filter highlights by scope (`This Chapter` / `This Book` / `All Books`), category (**Favorite Quote**, **Reading / Study Note**, **Expression / Idiom**), and highlight color, then click **`Jump`** to navigate back to the exact chapter passage or manga page/bubble (with a visual jump flash). Toggle **`Marks: Shown / Hidden` (`H`)** anytime for a clean distraction-free reading view.
 
 ### 5. Automatic Trouble Radar & Idle-Aware Timer
 - **Zero Manual Card Creation:** Shiori tracks implicit signals automatically:
@@ -61,7 +61,7 @@ Trigger a 10-question round from **Clear Chapter Quiz (10 Qs)** at the end of a 
 
 ### Keyboard Shortcuts
 - **Novels:** `[` / `]` for Previous / Next chapter, `H` to hide/show highlights, note tints, and grammar marks
-- **Manga:** `←` or `Space` (Next page RTL), `→` (Previous page RTL), `F` (Fullscreen), `V` (2-Page Spread / 1-Page Vertical), `S` (Cover Solo / Paired), `H` (Hide/show highlights, notes & OCR boxes), `C` (Select Area OCR; or hold `Shift + Drag`)
+- **Manga:** `←` or `Space` (Next page RTL), `→` (Previous page RTL), `F` (Fullscreen), `V` (Cycle 2-Page Spread / 1-Page Horizontal / 1-Page Vertical), `S` (Cover Solo / Paired), `H` (Hide/show highlights, notes & OCR boxes), `C` (Select Area OCR; or hold `Shift + Drag`)
 - **Quizzes:** `1`–`4` for multiple-choice answers, `Enter` to advance after feedback (or send in Grammar Chat; `Shift+Enter` for newline)
 - **Global:** `Escape` to close open popovers, inspect bars, drawers, or modals
 

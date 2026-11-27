@@ -188,6 +188,7 @@ def init_db() -> None:
                 quote_text TEXT NOT NULL DEFAULT '',
                 note_text TEXT NOT NULL DEFAULT '',
                 category TEXT NOT NULL DEFAULT 'quote',
+                color TEXT NOT NULL DEFAULT 'yellow',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -216,6 +217,13 @@ def init_db() -> None:
             conn.execute("ALTER TABLE books ADD COLUMN media_type TEXT NOT NULL DEFAULT 'novel'")
         if "toc_json" not in book_cols:
             conn.execute("ALTER TABLE books ADD COLUMN toc_json TEXT")
+
+        note_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(reader_notes)").fetchall()
+        }
+        if "color" not in note_cols:
+            conn.execute("ALTER TABLE reader_notes ADD COLUMN color TEXT NOT NULL DEFAULT 'yellow'")
 
         for key, default_val in config.DEFAULT_SETTINGS.items():
             conn.execute(
